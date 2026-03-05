@@ -100,6 +100,9 @@ export function computeActivationSpread(
 /** Decay constant: half-life ~7 days (exp(-0.1 * 7) ≈ 0.497) */
 const DECAY_RATE = 0.1;
 
+/** Maximum boost a single query can contribute to one note */
+const PER_QUERY_CAP = 0.05;
+
 /**
  * Load all boosts from DB. Apply time-based decay at read time.
  * Returns decayed current effective boosts.
@@ -127,7 +130,7 @@ export function loadBoosts(db: InstanceType<typeof Database>): Map<string, numbe
 
 /**
  * Write boosts to DB in one transaction.
- * DECAY-BEFORE-ACCUMULATE: read existing, decay to now, add new, clamp to 1.0, store.
+ * DECAY-BEFORE-ACCUMULATE: read existing, decay to now, accumulate via log-scale, store.
  */
 export function applyActivationBoosts(
   db: InstanceType<typeof Database>,
@@ -145,19 +148,17 @@ export function applyActivationBoosts(
 
   const transaction = db.transaction(() => {
     for (const [title, newBoost] of boosts) {
-      let finalBoost = newBoost;
+      const cappedBoost = Math.min(newBoost, PER_QUERY_CAP);
 
-      // Decay existing stored value to now before adding
+      // Decay existing stored value to now before accumulating
       const existing = selectStmt.get(title) as { boost: number; updated: string } | undefined;
-      if (existing) {
-        const updatedDate = new Date(existing.updated);
-        const daysSinceUpdate = Math.max(0, (now.getTime() - updatedDate.getTime()) / (1000 * 60 * 60 * 24));
-        const decayedExisting = existing.boost * Math.exp(-DECAY_RATE * daysSinceUpdate);
-        finalBoost = decayedExisting + newBoost;
-      }
+      const decayedExisting = existing
+        ? existing.boost * Math.exp(-DECAY_RATE * Math.max(0,
+            (now.getTime() - new Date(existing.updated).getTime()) / (1000 * 60 * 60 * 24)))
+        : 0;
 
-      // Clamp to 1.0
-      finalBoost = Math.min(finalBoost, 1.0);
+      // Log-scale accumulation: asymptotic approach to 1.0
+      const finalBoost = 1 - (1 - decayedExisting) * (1 - cappedBoost);
 
       upsertStmt.run(title, finalBoost, nowISO);
     }
