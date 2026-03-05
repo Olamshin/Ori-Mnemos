@@ -42,6 +42,7 @@ llm:
   provider: null           # "anthropic" | "openai" (OpenAI-compatible)
   model: null              # e.g. "claude-sonnet-4-20250514", "gpt-4o", "qwen2.5"
   api_key_env: null        # env var name containing API key
+  api_key_cmd: null        # shell command whose stdout is the API key (tried before api_key_env)
   base_url: null           # API base URL (null = provider default)
   # Examples:
   #   Anthropic:  provider: "anthropic", model: "claude-sonnet-4-20250514", api_key_env: "ANTHROPIC_API_KEY"
