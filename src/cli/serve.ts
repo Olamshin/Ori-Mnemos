@@ -141,7 +141,7 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
   const instructions = await buildInstructions(paths, autoCreated);
 
   const server = new McpServer(
-    { name: "ori-memory", version: "0.3.3" },
+    { name: "ori-memory", version: "0.3.5" },
     { instructions },
   );
 

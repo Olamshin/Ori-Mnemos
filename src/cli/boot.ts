@@ -48,29 +48,19 @@ const ELEPHANT = `⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣠⠤⠤⠶⠒⠒⠒�
 const MCP_CONFIGS: Record<string, { file: string; snippet: string }> = {
   "Claude Code": {
     file: ".claude/settings.json (in your project or ~/.claude/settings.json globally)",
-    snippet: `{
-  "mcpServers": {
-    "ori": {
-      "command": "ori",
-      "args": ["serve", "--mcp"]
-    }
-  }
-}`,
+    snippet: `Recommended:
+ori bridge claude-code --scope global --activation auto --vault /path/to/brain`,
   },
   Cursor: {
     file: ".cursor/mcp.json (in your project root)",
-    snippet: `{
-  "mcpServers": {
-    "ori": {
-      "command": "ori",
-      "args": ["serve", "--mcp"]
-    }
-  }
-}`,
+    snippet: `Recommended:
+ori bridge cursor --scope project --activation manual --vault /path/to/brain`,
   },
   Other: {
     file: "your MCP client's config file",
-    snippet: `Server command: ori serve --mcp
+    snippet: `Print install plan:
+ori bridge generic --scope global --activation manual --vault /path/to/brain
+
 Transport: stdio (JSON-RPC 2.0)`,
   },
 };
@@ -133,7 +123,7 @@ export async function runBootSequence(initResult: InitResult, targetDir: string)
 
   if (mode === "skip") {
     const resolvedDir = path.resolve(targetDir);
-    p.outro(`Vault created at ${dim(resolvedDir)}. Run ${gold("ori serve --mcp")} to connect your agent.`);
+    p.outro(`Vault created at ${dim(resolvedDir)}. Run ${gold("ori bridge claude-code --scope global --activation auto --vault " + resolvedDir)} or ${gold("ori bridge generic --scope global --activation manual --vault " + resolvedDir)}.`);
     await writeState(targetDir, { onboarded: true, version: getVersion() });
     return;
   }
@@ -183,8 +173,9 @@ export async function runBootSequence(initResult: InitResult, targetDir: string)
     [
       `Your brain lives at: ${gold(resolvedVault)}`,
       "",
-      `Running ${gold("ori init")} in any project folder connects`,
-      "that project to this brain. One brain, many projects.",
+      `Use ${gold(`ori bridge claude-code --scope global --activation auto --vault ${resolvedVault}`)}`,
+      `for Claude Code, or ${gold(`ori bridge generic --scope global --activation manual --vault ${resolvedVault}`)}`,
+      "for any other MCP client. One brain, many projects.",
     ].join("\n"),
     "How it works",
   );
@@ -226,7 +217,7 @@ export async function runBootSequence(initResult: InitResult, targetDir: string)
   );
 
   // 5. Done
-  p.outro(`Your memory starts now. Run ${gold("ori serve --mcp")} to connect your agent.`);
+  p.outro(`Your memory starts now. Run ${gold(`ori bridge claude-code --scope global --activation auto --vault ${resolvedVault}`)} or ${gold(`ori bridge generic --scope global --activation manual --vault ${resolvedVault}`)}.`);
 
   // Write state
   await writeState(resolvedVault, { onboarded: true, version: getVersion() });
@@ -238,5 +229,5 @@ export async function runBootSequence(initResult: InitResult, targetDir: string)
 function getVersion(): string {
   // Best effort — read from package.json at runtime would require fs
   // Just hardcode the current version; state.version is informational
-  return "0.3.3";
+  return "0.3.5";
 }

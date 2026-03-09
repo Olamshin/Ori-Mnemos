@@ -3,17 +3,23 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 
-function hasVaultRoot(startDir) {
+function findVaultRoot(startDir) {
+  const explicit = process.env.ORI_VAULT;
+  if (explicit && existsSync(path.join(explicit, ".ori"))) {
+    return explicit;
+  }
+
   let current = path.resolve(startDir);
   while (true) {
-    if (existsSync(path.join(current, ".ori"))) return true;
+    if (existsSync(path.join(current, ".ori"))) return current;
     const parent = path.dirname(current);
-    if (parent === current) return false;
+    if (parent === current) return null;
     current = parent;
   }
 }
 
-if (!hasVaultRoot(process.cwd())) {
+const vaultRoot = findVaultRoot(process.cwd());
+if (!vaultRoot) {
   process.exit(0);
 }
 
@@ -39,16 +45,7 @@ try {
 
   // Inbox count
   let inboxDir = null;
-  let current = path.resolve(process.cwd());
-  while (true) {
-    if (existsSync(path.join(current, ".ori"))) {
-      inboxDir = path.join(current, "inbox");
-      break;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
+  inboxDir = path.join(vaultRoot, "inbox");
 
   if (inboxDir && existsSync(inboxDir)) {
     try {

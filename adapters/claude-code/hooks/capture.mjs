@@ -3,12 +3,17 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-function hasVaultRoot(startDir) {
+function findVaultRoot(startDir) {
+  const explicit = process.env.ORI_VAULT;
+  if (explicit && existsSync(path.join(explicit, ".ori"))) {
+    return explicit;
+  }
+
   let current = path.resolve(startDir);
   while (true) {
-    if (existsSync(path.join(current, ".ori"))) return true;
+    if (existsSync(path.join(current, ".ori"))) return current;
     const parent = path.dirname(current);
-    if (parent === current) return false;
+    if (parent === current) return null;
     current = parent;
   }
 }
@@ -49,7 +54,7 @@ const title =
     ? normalizedSummary.slice(0, 120)
     : `session-capture-${new Date().toISOString().replace(/[:.]/g, "-")}`;
 
-if (!hasVaultRoot(process.cwd())) {
+if (!findVaultRoot(process.cwd())) {
   process.exit(0);
 }
 

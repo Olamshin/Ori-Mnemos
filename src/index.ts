@@ -15,7 +15,7 @@ import { runValidate } from "./cli/validate.js";
 import { runAdd } from "./cli/add.js";
 import { runPromote } from "./cli/promote.js";
 import { runArchive } from "./cli/archive.js";
-import { runBridgeClaudeCode, runBridgeClaudeCodeGlobal } from "./cli/bridge.js";
+import { runBridgeClaudeCode, runBridgeClaudeCodeGlobal, runBridgeCursor, runBridgeGeneric, runBridgeStatus } from "./cli/bridge.js";
 import { runServeMcp } from "./cli/serve.js";
 import { runQueryRanked, runQuerySimilar } from "./cli/search.js";
 import { runIndexBuild, runIndexStatus } from "./cli/indexcmd.js";
@@ -24,12 +24,28 @@ import { runPrune } from "./cli/prune.js";
 
 const program = new Command();
 
+function assertBridgeScope(value: string | undefined): "project" | "global" | undefined {
+  if (!value) return undefined;
+  if (value !== "project" && value !== "global") {
+    throw new Error(`Unknown bridge scope: ${value}`);
+  }
+  return value;
+}
+
+function assertBridgeActivation(value: string | undefined): "auto" | "manual" | undefined {
+  if (!value) return undefined;
+  if (value !== "auto" && value !== "manual") {
+    throw new Error(`Unknown bridge activation: ${value}`);
+  }
+  return value;
+}
+
 program
   .name("ori")
   .description(
     "Ori Mnemos - markdown-native cognitive harness for persistent agent memory"
   )
-  .version("0.3.3");
+  .version("0.3.5");
 
 program
   .command("init")
@@ -172,15 +188,127 @@ program
 
 program
   .command("bridge")
-  .argument("<target>", "claude-code")
-  .option("--global", "install hooks to ~/.claude/settings.json (all projects)")
-  .action(async (target: string, options: { global?: boolean }) => {
-    if (target !== "claude-code") {
+  .argument("<target>", "claude-code | cursor | generic | status")
+  .option("--global", "legacy shorthand for --scope global")
+  .option("--scope <scope>", "install scope: project | global")
+  .option("--activation <activation>", "activation mode: auto | manual")
+  .option("--vault <path>", "explicit vault path")
+  .option("--uninstall", "remove Ori bridge config for this target/scope")
+  .option("--json", "output JSON for install planning")
+  .action(async (
+    target: string,
+    options: { global?: boolean; scope?: string; activation?: string; vault?: string; uninstall?: boolean; json?: boolean }
+  ) => {
+    if (target !== "claude-code" && target !== "cursor" && target !== "generic" && target !== "status") {
       throw new Error(`Unknown bridge target: ${target}`);
     }
-    const result = options.global
-      ? await runBridgeClaudeCodeGlobal()
-      : await runBridgeClaudeCode(process.cwd());
+
+    if (target === "status") {
+      const result = await runBridgeStatus(process.cwd());
+      if (!options.json) {
+        const data = result.data as {
+          precedence: string;
+          instructions: string[];
+          clients: Record<string, {
+            project: { installed: boolean; activation: string | null; resolvedVault: string | null; configPaths: string[]; details: string[] };
+            global: { installed: boolean; activation: string | null; resolvedVault: string | null; configPaths: string[]; details: string[] };
+            active: { scope: string; activation: string | null; resolvedVault: string | null } | null;
+          }>;
+        };
+
+        console.log(`Precedence: ${data.precedence}`);
+        for (const [client, status] of Object.entries(data.clients)) {
+          console.log("");
+          console.log(`Client: ${client}`);
+          console.log(`  Active install: ${status.active ? status.active.scope : "none"}`);
+          if (status.active) {
+            console.log(`  Active activation: ${status.active.activation ?? "unknown"}`);
+            console.log(`  Active vault: ${status.active.resolvedVault ?? "(runtime discovery)"}`);
+          }
+          for (const scope of ["project", "global"] as const) {
+            const install = status[scope];
+            console.log(`  ${scope}: ${install.installed ? "installed" : "not installed"}`);
+            console.log(`    activation: ${install.activation ?? "n/a"}`);
+            console.log(`    vault: ${install.resolvedVault ?? "(none encoded)"}`);
+            console.log(`    checked: ${install.configPaths.join(", ")}`);
+            for (const detail of install.details) {
+              console.log(`    - ${detail}`);
+            }
+          }
+        }
+        if (data.instructions.length > 0) {
+          console.log("");
+          console.log("Notes:");
+          for (const instruction of data.instructions) {
+            console.log(`- ${instruction}`);
+          }
+        }
+        return;
+      }
+
+      console.log(JSON.stringify(result));
+      return;
+    }
+
+    const request = {
+      global: options.global,
+      scope: assertBridgeScope(options.scope),
+      activation: assertBridgeActivation(options.activation),
+      vault: options.vault,
+      uninstall: options.uninstall,
+    };
+
+    const result = target === "claude-code"
+      ? options.global
+        ? await runBridgeClaudeCodeGlobal(process.cwd(), request)
+        : await runBridgeClaudeCode(process.cwd(), request)
+      : target === "cursor"
+        ? await runBridgeCursor(process.cwd(), request)
+      : await runBridgeGeneric(process.cwd(), request);
+
+    if ((target === "generic" || target === "cursor") && !options.json) {
+      const data = result.data as {
+        client: string;
+        operation?: string;
+        mutation?: string;
+        command: string;
+        args: string[];
+        env: Record<string, string>;
+        scope: string;
+        activation: string;
+        resolvedVault: string | null;
+        instructions: string[];
+        mcpPath?: string;
+      };
+
+      console.log(`Client: ${data.client === "generic" ? "generic MCP client" : data.client}`);
+      if (data.operation) {
+        console.log(`Operation: ${data.operation}`);
+      }
+      if (data.mutation) {
+        console.log(`Result: ${data.mutation}`);
+      }
+      console.log(`Scope: ${data.scope}`);
+      console.log(`Activation: ${data.activation}`);
+      console.log(`Resolved vault: ${data.resolvedVault ?? "(runtime discovery)"}`);
+      if (data.mcpPath) {
+        console.log(`MCP config path: ${data.mcpPath}`);
+      }
+      console.log("");
+      console.log("Server config:");
+      console.log(`  command: ${data.command}`);
+      console.log(`  args: ${JSON.stringify(data.args)}`);
+      console.log(`  env: ${JSON.stringify(data.env)}`);
+      if (data.instructions.length > 0) {
+        console.log("");
+        console.log("Instructions:");
+        for (const instruction of data.instructions) {
+          console.log(`- ${instruction}`);
+        }
+      }
+      return;
+    }
+
     console.log(JSON.stringify(result));
   });
 

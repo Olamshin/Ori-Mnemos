@@ -6,7 +6,7 @@ Install it on any machine, point your agent at it, and it wakes up knowing who i
 
 Markdown on disk. Wiki-links as graph edges. Git as version control. No database, no cloud, no lock-in.
 
-**v0.3.3** · npm package · Apache-2.0
+**v0.3.5** · npm package · Apache-2.0
 
 ---
 
@@ -18,14 +18,32 @@ ori init my-agent
 cd my-agent
 ```
 
-Add to any MCP client (Claude Code, Cursor, Windsurf, Cline, or your own agent loop):
+Connect Ori to your client:
+
+```bash
+ori bridge claude-code --scope global --activation auto --vault ~/brain
+ori bridge cursor --scope project --activation manual --vault ~/brain
+```
+
+Or use the generic/manual install plan for any MCP client:
+
+```bash
+ori bridge generic --scope global --activation manual --vault ~/brain
+```
+
+That prints the MCP server command, args, env, and install notes. For scripting, add `--json`.
+
+Manual MCP shape:
 
 ```json
 {
   "mcpServers": {
     "ori": {
       "command": "ori",
-      "args": ["serve", "--mcp"]
+      "args": ["serve", "--mcp", "--vault", "/path/to/brain"],
+      "env": {
+        "ORI_VAULT": "/path/to/brain"
+      }
     }
   }
 }
@@ -77,7 +95,7 @@ Layer 2: Knowledge Graph + Vitality Model        wiki-links, ACT-R decay, spread
 Layer 1: Markdown files on disk                  git-friendly, human-readable, portable
 ```
 
-14 MCP tools. 5 resources. 16 CLI commands. 396 tests (328 unit + 68 integration).
+14 MCP tools. 5 resources. 16 CLI commands. 442 tests.
 
 ---
 
@@ -190,8 +208,14 @@ ori index build [--force]         # Build embedding index
 ori index status                  # Index statistics
 ori graph metrics                 # PageRank, centrality
 ori graph communities             # Louvain clustering
-ori serve --mcp [--vault <path>]  # Run MCP server
-ori bridge claude-code [--global] # Install Claude Code hooks
+ori serve --mcp [--vault <path>]                                # Run MCP server
+ori bridge claude-code --scope <project|global>                 # Install Claude adapter
+ori bridge cursor --scope <project|global>                      # Install Cursor MCP config
+ori bridge claude-code --activation <auto|manual> [--vault <p>] # Control startup behavior
+ori bridge generic --scope <project|global> [--json]            # Print generic MCP install plan
+ori bridge status [--json]                                      # Inspect project/global bridge installs
+ori bridge claude-code --scope global --uninstall               # Remove installed Claude config
+ori bridge cursor --scope project --uninstall                   # Remove installed Cursor config
 ```
 
 ---
@@ -230,6 +254,28 @@ Every file is plain markdown. Open it in any text editor, Obsidian, or your file
 **Multi-vault.** Separate Ori instances for separate agents. Each vault is self-contained: its own identity, knowledge graph, and operational state.
 
 **Scriptable.** CLI returns structured JSON. Use in cron jobs, webhook handlers, or orchestration loops.
+
+## Install Model
+
+Ori separates three install concepts:
+
+- `scope`: `global` follows one vault across the machine, `project` stays inside one repo/workspace
+- `activation`: `auto` runs `ori_orient` at session start where the adapter supports it, `manual` leaves tools available but does not auto-orient
+- `vault`: explicit `--vault` wins; otherwise Ori resolves by install scope
+
+Precedence rules:
+
+- project install overrides global install
+- explicit `--vault` overrides inferred vault
+- project activation overrides global activation
+
+Bridge lifecycle:
+
+- rerun the same `ori bridge ...` command to update vault path or activation in place
+- use `--uninstall` to remove Ori-owned config from supported adapters
+- generic installs emit manual uninstall instructions because Ori does not own that client config surface
+
+Claude Code is the first fully automated adapter. Cursor now has native MCP config install support. Other MCP-capable clients can use `ori bridge generic` now and wire the emitted config into their own client surface.
 
 ---
 
@@ -272,7 +318,7 @@ ori --version
 ```
 
 ```bash
-npm test              # 396 tests
+npm test              # 442 tests
 npm run lint          # Type check
 npm run dev           # Watch mode
 ```

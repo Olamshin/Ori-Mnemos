@@ -3,12 +3,17 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-function hasVaultRoot(startDir) {
+function findVaultRoot(startDir) {
+  const explicit = process.env.ORI_VAULT;
+  if (explicit && existsSync(path.join(explicit, ".ori"))) {
+    return explicit;
+  }
+
   let current = path.resolve(startDir);
   while (true) {
-    if (existsSync(path.join(current, ".ori"))) return true;
+    if (existsSync(path.join(current, ".ori"))) return current;
     const parent = path.dirname(current);
-    if (parent === current) return false;
+    if (parent === current) return null;
     current = parent;
   }
 }
@@ -47,7 +52,14 @@ const filePath =
 if (!filePath) {
   process.exit(0);
 }
-if (!hasVaultRoot(process.cwd())) {
+const vaultRoot = findVaultRoot(process.cwd());
+if (!vaultRoot) {
+  process.exit(0);
+}
+
+const normalizedVault = path.resolve(vaultRoot).toLowerCase() + path.sep;
+const normalizedFile = path.resolve(filePath).toLowerCase();
+if (!normalizedFile.startsWith(normalizedVault)) {
   process.exit(0);
 }
 
