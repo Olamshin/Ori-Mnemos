@@ -1,7 +1,12 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { findVaultRoot, getVaultPaths, listNoteTitles } from "../core/vault.js";
-import { buildGraph, findDanglingLinks, findOrphans } from "../core/graph.js";
+import {
+  buildGraph,
+  findDanglingLinks,
+  findOrphans,
+  type LinkGraph,
+} from "../core/graph.js";
 import { loadConfig, resolveTemplatePath } from "../core/config.js";
 import { validateNoteAgainstSchema } from "../core/schema.js";
 import { parseFrontmatter } from "../core/frontmatter.js";
@@ -13,13 +18,16 @@ export type HealthResult = {
   warnings: string[];
 };
 
-export async function runHealth(startDir: string): Promise<HealthResult> {
+export async function runHealth(
+  startDir: string,
+  linkGraph?: LinkGraph,
+): Promise<HealthResult> {
   const vaultRoot = await findVaultRoot(startDir);
   const paths = getVaultPaths(vaultRoot);
   const config = await loadConfig(paths.config);
 
   const allNotes = await listNoteTitles(paths.notes);
-  const graph = await buildGraph(paths.notes);
+  const graph = linkGraph ?? await buildGraph(paths.notes);
   const orphans = findOrphans(graph, allNotes);
   const dangling = findDanglingLinks(graph, allNotes);
 

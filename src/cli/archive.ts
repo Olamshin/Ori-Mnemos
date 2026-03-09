@@ -1,6 +1,7 @@
 import path from "node:path";
 import { findVaultRoot, getVaultPaths, listNoteTitles } from "../core/vault.js";
 import { loadConfig } from "../core/config.js";
+import { initDB, removeNoteFromDB } from "../core/engine.js";
 import {
   readFrontmatterFile,
   writeFrontmatterFile,
@@ -64,12 +65,14 @@ export async function runArchive(
 ): Promise<ArchiveResult> {
   const vaultRoot = await findVaultRoot(options.startDir);
   const paths = getVaultPaths(vaultRoot);
-  await loadConfig(paths.config); // validate config exists
+  const config = await loadConfig(paths.config);
 
   const titles = await listNoteTitles(paths.notes);
   const graph = await buildGraph(paths.notes);
   const now = new Date();
   const archived: ArchivedNote[] = [];
+  const dbPath = path.resolve(vaultRoot, config.engine.db_path);
+  const db = options.dryRun ? null : initDB(dbPath);
 
   for (const title of titles) {
     const filePath = path.join(paths.notes, `${title}.md`);
@@ -93,6 +96,7 @@ export async function runArchive(
     if (!options.dryRun) {
       parsed.data.status = "archived";
       await writeFrontmatterFile(filePath, parsed.data, parsed.body);
+      removeNoteFromDB(db!, title);
     }
 
     archived.push({
@@ -102,6 +106,8 @@ export async function runArchive(
       incomingLinks,
     });
   }
+
+  db?.close();
 
   return {
     success: true,

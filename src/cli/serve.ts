@@ -21,8 +21,10 @@ import { runIndexBuild } from "./indexcmd.js";
 import { runPrune } from "./prune.js";
 import { findVaultRootWithSource, getGlobalVaultPath, getVaultPaths, type VaultPaths } from "../core/vault.js";
 import { runInit } from "./init.js";
+import { GraphCache } from "../core/graph.js";
 
 let vaultDir: string;
+const graphCache = new GraphCache();
 
 function textResult(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
@@ -205,7 +207,7 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
         safeReadFile(path.join(paths.ops, "daily.md")),
         safeReadFile(path.join(paths.ops, "reminders.md")),
       ]);
-      const status = await runStatus(vaultDir);
+      const status = await runStatus(vaultDir, await graphCache.get(paths.notes));
 
       const payload: Record<string, unknown> = {
         daily,
@@ -309,7 +311,7 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
 
   // ori_status
   server.tool("ori_status", "Vault overview", {}, async () => {
-    const result = await runStatus(vaultDir);
+    const result = await runStatus(vaultDir, await graphCache.get(paths.notes));
     return textResult(result);
   });
 
@@ -322,14 +324,15 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
       note: z.string().optional().describe("Note title (required for backlinks)"),
     },
     async ({ kind, note }) => {
+      const linkGraph = await graphCache.get(paths.notes);
       switch (kind) {
         case "orphans":
-          return textResult(await runQueryOrphans(vaultDir));
+          return textResult(await runQueryOrphans(vaultDir, linkGraph));
         case "dangling":
-          return textResult(await runQueryDangling(vaultDir));
+          return textResult(await runQueryDangling(vaultDir, linkGraph));
         case "backlinks":
           if (!note) return errorResult("note required for backlinks query");
-          return textResult(await runQueryBacklinks(vaultDir, note));
+          return textResult(await runQueryBacklinks(vaultDir, note, linkGraph));
         case "cross-project":
           return textResult(await runQueryCrossProject(vaultDir));
         default:
@@ -378,7 +381,7 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
 
   // ori_health
   server.tool("ori_health", "Full diagnostic", {}, async () => {
-    const result = await runHealth(vaultDir);
+    const result = await runHealth(vaultDir, await graphCache.get(paths.notes));
     return textResult(result);
   });
 
@@ -407,6 +410,9 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
         links: links ?? undefined,
         project: project ?? undefined,
       });
+      if (dry_run !== true && result.success) {
+        graphCache.invalidate();
+      }
       return textResult(result);
     }
   );
@@ -421,7 +427,13 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
       include_archived: z.boolean().optional().describe("Include archived notes (default: false)"),
     },
     async ({ query, limit, include_archived }) => {
-      const result = await runQueryRanked(vaultDir, query, limit, include_archived ? false : true);
+      const result = await runQueryRanked(
+        vaultDir,
+        query,
+        limit,
+        include_archived ? false : true,
+        await graphCache.get(paths.notes),
+      );
       return textResult(result);
     }
   );
@@ -436,7 +448,13 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
       include_archived: z.boolean().optional().describe("Include archived notes (default: false)"),
     },
     async ({ query, limit, include_archived }) => {
-      const result = await runQuerySimilar(vaultDir, query, limit, include_archived ? false : true);
+      const result = await runQuerySimilar(
+        vaultDir,
+        query,
+        limit,
+        include_archived ? false : true,
+        await graphCache.get(paths.notes),
+      );
       return textResult(result);
     }
   );
@@ -449,7 +467,11 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
       limit: z.number().optional().describe("Max results (default 10)"),
     },
     async ({ limit }) => {
-      const result = await runQueryImportant(vaultDir, limit);
+      const result = await runQueryImportant(
+        vaultDir,
+        limit,
+        await graphCache.get(paths.notes),
+      );
       return textResult(result);
     }
   );
@@ -463,7 +485,12 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
       limit: z.number().optional().describe("Max results (default 20)"),
     },
     async ({ threshold, limit }) => {
-      const result = await runQueryFading(vaultDir, threshold, limit);
+      const result = await runQueryFading(
+        vaultDir,
+        threshold,
+        limit,
+        await graphCache.get(paths.notes),
+      );
       return textResult(result);
     }
   );
@@ -481,6 +508,9 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
         startDir: vaultDir,
         dryRun: apply !== true,
       });
+      if (apply === true && result.success) {
+        graphCache.invalidate();
+      }
       return textResult(result);
     }
   );
@@ -494,6 +524,7 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
     },
     async ({ force }) => {
       const result = await runIndexBuild(vaultDir, force === true);
+      graphCache.invalidate();
       return textResult(result);
     }
   );

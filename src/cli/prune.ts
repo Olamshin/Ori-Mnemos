@@ -6,7 +6,7 @@ import path from "node:path";
 import { findVaultRoot, getVaultPaths, listNoteTitles } from "../core/vault.js";
 import { buildGraph } from "../core/graph.js";
 import { loadConfig } from "../core/config.js";
-import { initDB } from "../core/engine.js";
+import { initDB, removeNoteFromDB } from "../core/engine.js";
 import {
   computeGraphMetrics,
   findBridgeNotes,
@@ -166,6 +166,7 @@ export async function runPrune(options: PruneOptions): Promise<PruneResult> {
   // 9. Apply if not dry-run
   let archivedCount = 0;
   if (!dryRun) {
+    const db = initDB(dbPath);
     for (const candidate of candidates) {
       const filePath = path.join(paths.notes, `${candidate.title}.md`);
       try {
@@ -173,11 +174,13 @@ export async function runPrune(options: PruneOptions): Promise<PruneResult> {
         const fm = data ?? {};
         fm.status = "archived";
         await writeFrontmatterFile(filePath, fm, body);
+        removeNoteFromDB(db, candidate.title);
         archivedCount++;
       } catch {
         warnings.push(`Failed to archive: ${candidate.title}`);
       }
     }
+    db.close();
   }
 
   // 10. Build community hotspots (top 5 by mean vitality)

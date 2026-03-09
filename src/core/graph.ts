@@ -1,10 +1,26 @@
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
+import { parseFrontmatter } from "./frontmatter.js";
 
 export type LinkGraph = {
   outgoing: Map<string, Set<string>>;
   incoming: Map<string, Set<string>>;
 };
+
+export class GraphCache {
+  private graph: LinkGraph | null = null;
+
+  async get(notesDir: string): Promise<LinkGraph> {
+    if (!this.graph) {
+      this.graph = await buildGraph(notesDir);
+    }
+    return this.graph;
+  }
+
+  invalidate(): void {
+    this.graph = null;
+  }
+}
 
 export async function buildGraph(notesDir: string): Promise<LinkGraph> {
   let files: Dirent[];
@@ -26,6 +42,10 @@ export async function buildGraph(notesDir: string): Promise<LinkGraph> {
   for (const filePath of markdownFiles) {
     const title = path.basename(filePath, ".md");
     const content = await fs.readFile(filePath, "utf8");
+    const { data } = parseFrontmatter(content);
+    if (data?.status === "archived") {
+      continue;
+    }
     const links = new Set<string>();
 
     for (const match of content.matchAll(/\[\[([^\]]+)\]\]/g)) {

@@ -1,7 +1,7 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { findVaultRoot, getVaultPaths, listNoteTitles } from "../core/vault.js";
-import { buildGraph } from "../core/graph.js";
+import { buildGraph, type LinkGraph } from "../core/graph.js";
 import { loadConfig } from "../core/config.js";
 import { classifyIntent } from "../core/intent.js";
 import {
@@ -43,6 +43,7 @@ export async function runQueryRanked(
   query: string,
   limit?: number,
   excludeArchived?: boolean,
+  linkGraph?: LinkGraph,
 ): Promise<SearchResult> {
   const warnings: string[] = [];
 
@@ -54,12 +55,12 @@ export async function runQueryRanked(
   const candidateLimit = resultLimit * config.retrieval.candidate_multiplier;
 
   // 2. Build link graph
-  const linkGraph = await buildGraph(paths.notes);
+  const graph = linkGraph ?? await buildGraph(paths.notes);
 
   // 3. Graph metrics (PageRank, communities, bridges)
   const allTitles = await listNoteTitles(paths.notes);
   const noteIndex = await buildNoteIndex(paths.notes, allTitles);
-  const graphMetrics = computeGraphMetrics(linkGraph, noteIndex);
+  const graphMetrics = computeGraphMetrics(graph, noteIndex);
 
   // 4. Ensure embedding index exists and open DB (single connection for entire function)
   const dbPath = path.resolve(vaultRoot, config.engine.db_path);
@@ -95,7 +96,7 @@ export async function runQueryRanked(
   const vitalityScores = await computeAllVitality(
     paths.notes,
     allTitles,
-    linkGraph,
+    graph,
     graphMetrics.bridges,
     config,
     boostScores,
@@ -120,7 +121,7 @@ export async function runQueryRanked(
   const keywordResults = searchBM25(query, bm25Index, config.bm25, candidateLimit);
 
   // 10. Signal 3: personalized PageRank from entity seeds
-  const gGraph = buildGraphologyGraph(linkGraph);
+  const gGraph = buildGraphologyGraph(graph);
   const pprScores = personalizedPageRank(
     gGraph,
     classified.entities,
@@ -182,7 +183,7 @@ export async function runQueryRanked(
       const spread = computeActivationSpread(
         result.title,
         result.score,
-        linkGraph,
+        graph,
         config.activation,
       );
       for (const [title, boost] of spread.propagated) {
@@ -217,6 +218,7 @@ export async function runQuerySimilar(
   query: string,
   limit?: number,
   excludeArchived?: boolean,
+  linkGraph?: LinkGraph,
 ): Promise<SearchResult> {
   const warnings: string[] = [];
 
@@ -227,14 +229,14 @@ export async function runQuerySimilar(
   const resultLimit = limit ?? config.retrieval.default_limit;
 
   // 2. Build graph + metrics + vitality
-  const linkGraph = await buildGraph(paths.notes);
+  const graph = linkGraph ?? await buildGraph(paths.notes);
   const allTitles = await listNoteTitles(paths.notes);
   const noteIndex = await buildNoteIndex(paths.notes, allTitles);
-  const graphMetrics = computeGraphMetrics(linkGraph, noteIndex);
+  const graphMetrics = computeGraphMetrics(graph, noteIndex);
   const vitalityScores = await computeAllVitality(
     paths.notes,
     allTitles,
-    linkGraph,
+    graph,
     graphMetrics.bridges,
     config,
   );

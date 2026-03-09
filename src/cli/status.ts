@@ -1,7 +1,7 @@
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { findVaultRoot, getVaultPaths, listNoteTitles } from "../core/vault.js";
-import { buildGraph, findOrphans } from "../core/graph.js";
+import { buildGraph, findOrphans, type LinkGraph } from "../core/graph.js";
 
 export type StatusResult = {
   success: boolean;
@@ -9,12 +9,15 @@ export type StatusResult = {
   warnings: string[];
 };
 
-export async function runStatus(startDir: string): Promise<StatusResult> {
+export async function runStatus(
+  startDir: string,
+  linkGraph?: LinkGraph,
+): Promise<StatusResult> {
   const vaultRoot = await findVaultRoot(startDir);
   const paths = getVaultPaths(vaultRoot);
 
   const allNotes = await listNoteTitles(paths.notes);
-  const graph = await buildGraph(paths.notes);
+  const graph = linkGraph ?? await buildGraph(paths.notes);
   const orphans = findOrphans(graph, allNotes);
 
   let inboxEntries: Dirent[];

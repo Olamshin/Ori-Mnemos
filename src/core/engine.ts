@@ -72,6 +72,17 @@ export function initDB(dbPath: string): InstanceType<typeof Database> {
   return db;
 }
 
+export function removeNoteFromDB(
+  db: InstanceType<typeof Database>,
+  title: string,
+): void {
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM embeddings WHERE title = ?").run(title);
+    db.prepare("DELETE FROM boosts WHERE title = ?").run(title);
+  });
+  tx();
+}
+
 // ---------------------------------------------------------------------------
 // Vector loading
 // ---------------------------------------------------------------------------
@@ -402,8 +413,12 @@ export async function buildIndex(
     files = [];
   }
 
-  let indexed = 0;
-  let skipped = 0;
+  const activeNotes: Array<{
+    title: string;
+    frontmatter: Record<string, unknown>;
+    body: string;
+    contentHashValue: string;
+  }> = [];
 
   for (const file of files) {
     const title = path.basename(file, ".md");
@@ -412,22 +427,49 @@ export async function buildIndex(
     const { data: frontmatter, body } = parseFrontmatter(content);
     const fm = frontmatter ?? {};
 
+    if (fm.status === "archived") {
+      continue;
+    }
+
     const description =
       typeof fm.description === "string" ? (fm.description as string) : "";
     const contentHashValue = hashContent(
       `${title}\n${description}\n${body}`,
     );
 
-    if (!options?.force && existingHashes.get(title) === contentHashValue) {
+    activeNotes.push({
+      title,
+      frontmatter: fm,
+      body,
+      contentHashValue,
+    });
+  }
+
+  const activeTitles = new Set(activeNotes.map((note) => note.title));
+  for (const title of existingHashes.keys()) {
+    if (!activeTitles.has(title)) {
+      removeNoteFromDB(db, title);
+      existingHashes.delete(title);
+    }
+  }
+
+  let indexed = 0;
+  let skipped = 0;
+
+  for (const note of activeNotes) {
+    if (
+      !options?.force &&
+      existingHashes.get(note.title) === note.contentHashValue
+    ) {
       skipped++;
       continue;
     }
 
     await indexNote(
       db,
-      title,
-      fm,
-      body,
+      note.title,
+      note.frontmatter,
+      note.body,
       linkGraph,
       graphMetrics.communities,
       totalCommunities,
@@ -441,7 +483,7 @@ export async function buildIndex(
   return {
     indexed,
     skipped,
-    total: files.length,
+    total: activeNotes.length,
     durationMs: Date.now() - start,
     model: config.embedding_model,
   };

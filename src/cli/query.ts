@@ -1,7 +1,13 @@
 import path from "node:path";
 import { promises as fs, type Dirent } from "node:fs";
 import { findVaultRoot, getVaultPaths, listNoteTitles } from "../core/vault.js";
-import { buildGraph, findBacklinks, findDanglingLinks, findOrphans } from "../core/graph.js";
+import {
+  buildGraph,
+  findBacklinks,
+  findDanglingLinks,
+  findOrphans,
+  type LinkGraph,
+} from "../core/graph.js";
 import { parseFrontmatter } from "../core/frontmatter.js";
 import { computeGraphMetrics } from "../core/importance.js";
 import { rankByImportance, rankByFading } from "../core/ranking.js";
@@ -13,11 +19,14 @@ export type QueryResult = {
   warnings: string[];
 };
 
-export async function runQueryOrphans(startDir: string): Promise<QueryResult> {
+export async function runQueryOrphans(
+  startDir: string,
+  linkGraph?: LinkGraph,
+): Promise<QueryResult> {
   const vaultRoot = await findVaultRoot(startDir);
   const { notes } = getVaultPaths(vaultRoot);
   const allNotes = await listNoteTitles(notes);
-  const graph = await buildGraph(notes);
+  const graph = linkGraph ?? await buildGraph(notes);
   const orphans = findOrphans(graph, allNotes);
 
   return {
@@ -27,11 +36,14 @@ export async function runQueryOrphans(startDir: string): Promise<QueryResult> {
   };
 }
 
-export async function runQueryDangling(startDir: string): Promise<QueryResult> {
+export async function runQueryDangling(
+  startDir: string,
+  linkGraph?: LinkGraph,
+): Promise<QueryResult> {
   const vaultRoot = await findVaultRoot(startDir);
   const { notes } = getVaultPaths(vaultRoot);
   const allNotes = await listNoteTitles(notes);
-  const graph = await buildGraph(notes);
+  const graph = linkGraph ?? await buildGraph(notes);
   const dangling = findDanglingLinks(graph, allNotes);
 
   return {
@@ -43,11 +55,12 @@ export async function runQueryDangling(startDir: string): Promise<QueryResult> {
 
 export async function runQueryBacklinks(
   startDir: string,
-  note: string
+  note: string,
+  linkGraph?: LinkGraph,
 ): Promise<QueryResult> {
   const vaultRoot = await findVaultRoot(startDir);
   const { notes } = getVaultPaths(vaultRoot);
-  const graph = await buildGraph(notes);
+  const graph = linkGraph ?? await buildGraph(notes);
   const backlinks = findBacklinks(graph, note);
 
   return {
@@ -92,12 +105,13 @@ export async function runQueryCrossProject(startDir: string): Promise<QueryResul
 
 export async function runQueryImportant(
   startDir: string,
-  limit?: number
+  limit?: number,
+  linkGraph?: LinkGraph,
 ): Promise<QueryResult> {
   const vaultRoot = await findVaultRoot(startDir);
   const { notes } = getVaultPaths(vaultRoot);
   const allNotes = await listNoteTitles(notes);
-  const graph = await buildGraph(notes);
+  const graph = linkGraph ?? await buildGraph(notes);
   const metrics = computeGraphMetrics(graph);
   const results = rankByImportance(allNotes, metrics.pagerank, limit ?? 10);
 
@@ -111,12 +125,13 @@ export async function runQueryImportant(
 export async function runQueryFading(
   startDir: string,
   threshold?: number,
-  limit?: number
+  limit?: number,
+  linkGraph?: LinkGraph,
 ): Promise<QueryResult> {
   const vaultRoot = await findVaultRoot(startDir);
   const { notes: notesDir } = getVaultPaths(vaultRoot);
   const allNotes = await listNoteTitles(notesDir);
-  const graph = await buildGraph(notesDir);
+  const graph = linkGraph ?? await buildGraph(notesDir);
   const metrics = computeGraphMetrics(graph);
 
   const vitalityScores = new Map<string, number>();
