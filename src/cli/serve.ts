@@ -43,6 +43,7 @@ import {
 } from "../core/stage-learner.js";
 import { StageTracker } from "../core/stage-tracker.js";
 import type Database from "better-sqlite3";
+import { checkForUpdate } from "../core/update-check.js";
 
 let vaultDir: string;
 const graphCache = new GraphCache();
@@ -409,6 +410,16 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
           ],
           save_with: "Use ori_update to write identity, goals, and methodology based on their answers",
         };
+      }
+
+      // Check for updates (best-effort, cached 24h)
+      try {
+        const update = await checkForUpdate();
+        if (update.updateAvailable) {
+          payload.updateAvailable = update;
+        }
+      } catch {
+        // Never fail orient for an update check
       }
 
       return textResult(payload);

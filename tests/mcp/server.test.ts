@@ -28,7 +28,7 @@ describe("server initialization", () => {
   it("reports correct server name and version", () => {
     const info = ctx.client.getServerVersion();
     expect(info?.name).toBe("ori-memory");
-    expect(info?.version).toBe("0.3.5");
+    expect(info?.version).toBe("0.4.0");
   });
 
   it("provides instructions string", () => {
