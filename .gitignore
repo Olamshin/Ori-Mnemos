@@ -28,6 +28,28 @@ PLAN.md
 ROADMAP.md
 tests/*
 !tests/bridge.test.ts
+!tests/cli/
+tests/cli/*
+!tests/cli/archive.test.ts
+!tests/cli/prune.test.ts
+!tests/core/
+tests/core/*
+!tests/core/config.test.ts
+!tests/core/engine.test.ts
+!tests/core/fusion.test.ts
+!tests/core/graph.test.ts
+!tests/core/warmth-audit.test.ts
+!tests/core/warmth.test.ts
+!tests/core/qvalue.test.ts
+!tests/core/reward.test.ts
+!tests/core/rerank.test.ts
+!tests/core/cooccurrence.test.ts
+!tests/core/ppr.test.ts
+!tests/core/stage-learner.test.ts
+!tests/core/dampening.test.ts
+!tests/mcp/
+tests/mcp/*
+!tests/mcp/server.test.ts
 .npmrc
 
 # Registry tokens (sensitive)

@@ -61,6 +61,7 @@ export type RetrievalConfig = {
     composite: number;
     keyword: number;
     graph: number;
+    warmth: number;
   };
   exploration_budget: number;
 };
@@ -85,6 +86,17 @@ export type ActivationConfig = {
   min_boost: number;    // default 0.01
 };
 
+export type WarmthConfig = {
+  enabled: boolean;
+  surprise_threshold: number;
+  activation_threshold: number;
+  ppr_alpha: number;
+  ppr_iterations: number;
+  graph_weight: number;
+  max_results: number;
+  shadow_compare_enabled: boolean;
+};
+
 export type OriConfig = {
   vault: {
     version: string;
@@ -99,6 +111,7 @@ export type OriConfig = {
   bm25: BM25Config;
   ips: IPSConfig;
   activation: ActivationConfig;
+  warmth: WarmthConfig;
 };
 
 const DEFAULT_PROMOTE_CONFIG: PromoteConfig = {
@@ -129,9 +142,10 @@ const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   candidate_multiplier: 5,
   rrf_k: 60,
   signal_weights: {
-    composite: 2.0,
-    keyword: 1.0,
-    graph: 1.5,
+    composite: 0.36,
+    keyword: 0.18,
+    graph: 0.26,
+    warmth: 0.20,
   },
   exploration_budget: 0.10,
 };
@@ -156,6 +170,17 @@ const DEFAULT_ACTIVATION_CONFIG: ActivationConfig = {
   min_boost: 0.01,
 };
 
+const DEFAULT_WARMTH_CONFIG: WarmthConfig = {
+  enabled: true,
+  surprise_threshold: 0.15,
+  activation_threshold: 0.35,
+  ppr_alpha: 0.15,
+  ppr_iterations: 20,
+  graph_weight: 0.3,
+  max_results: 20,
+  shadow_compare_enabled: true,
+};
+
 const DEFAULT_CONFIG: OriConfig = {
   vault: { version: "0.1" },
   templates: {
@@ -174,6 +199,7 @@ const DEFAULT_CONFIG: OriConfig = {
   bm25: { ...DEFAULT_BM25_CONFIG },
   ips: { ...DEFAULT_IPS_CONFIG },
   activation: { ...DEFAULT_ACTIVATION_CONFIG },
+  warmth: { ...DEFAULT_WARMTH_CONFIG },
 };
 
 export function applyConfigDefaults(raw: Partial<OriConfig>): OriConfig {
@@ -189,6 +215,7 @@ export function applyConfigDefaults(raw: Partial<OriConfig>): OriConfig {
   const rawBM25 = (raw as Record<string, unknown>).bm25 as Partial<BM25Config> | undefined;
   const rawIPS = (raw as Record<string, unknown>).ips as Partial<IPSConfig> | undefined;
   const rawActivation = (raw as Record<string, unknown>).activation as Partial<ActivationConfig> | undefined;
+  const rawWarmth = (raw as Record<string, unknown>).warmth as Partial<WarmthConfig> | undefined;
 
   return {
     vault: {
@@ -264,6 +291,7 @@ export function applyConfigDefaults(raw: Partial<OriConfig>): OriConfig {
         composite: rawRetrieval?.signal_weights?.composite ?? DEFAULT_RETRIEVAL_CONFIG.signal_weights.composite,
         keyword: rawRetrieval?.signal_weights?.keyword ?? DEFAULT_RETRIEVAL_CONFIG.signal_weights.keyword,
         graph: rawRetrieval?.signal_weights?.graph ?? DEFAULT_RETRIEVAL_CONFIG.signal_weights.graph,
+        warmth: rawRetrieval?.signal_weights?.warmth ?? DEFAULT_RETRIEVAL_CONFIG.signal_weights.warmth,
       },
       exploration_budget: rawRetrieval?.exploration_budget ?? DEFAULT_RETRIEVAL_CONFIG.exploration_budget,
     },
@@ -283,6 +311,16 @@ export function applyConfigDefaults(raw: Partial<OriConfig>): OriConfig {
       damping: rawActivation?.damping ?? DEFAULT_ACTIVATION_CONFIG.damping,
       max_hops: rawActivation?.max_hops ?? DEFAULT_ACTIVATION_CONFIG.max_hops,
       min_boost: rawActivation?.min_boost ?? DEFAULT_ACTIVATION_CONFIG.min_boost,
+    },
+    warmth: {
+      enabled: rawWarmth?.enabled ?? DEFAULT_WARMTH_CONFIG.enabled,
+      surprise_threshold: rawWarmth?.surprise_threshold ?? DEFAULT_WARMTH_CONFIG.surprise_threshold,
+      activation_threshold: rawWarmth?.activation_threshold ?? DEFAULT_WARMTH_CONFIG.activation_threshold,
+      ppr_alpha: rawWarmth?.ppr_alpha ?? DEFAULT_WARMTH_CONFIG.ppr_alpha,
+      ppr_iterations: rawWarmth?.ppr_iterations ?? DEFAULT_WARMTH_CONFIG.ppr_iterations,
+      graph_weight: rawWarmth?.graph_weight ?? DEFAULT_WARMTH_CONFIG.graph_weight,
+      max_results: rawWarmth?.max_results ?? DEFAULT_WARMTH_CONFIG.max_results,
+      shadow_compare_enabled: rawWarmth?.shadow_compare_enabled ?? DEFAULT_WARMTH_CONFIG.shadow_compare_enabled,
     },
   };
 }

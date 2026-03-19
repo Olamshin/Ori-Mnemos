@@ -5,6 +5,8 @@ export interface ScoredNote {
     composite?: number;
     keyword?: number;
     graph?: number;
+    warmth?: number;
+    rrf_base?: number;
     rrf?: number;
   };
   spaces?: {

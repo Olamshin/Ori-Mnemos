@@ -15,11 +15,17 @@ export interface SignalResults {
   composite: ScoredNote[];
   keyword: ScoredNote[];
   graph: ScoredNote[];
+  warmth: ScoredNote[];
 }
 
 type SignalName = keyof SignalResults;
 
-const SIGNAL_NAMES: readonly SignalName[] = ["composite", "keyword", "graph"] as const;
+const SIGNAL_NAMES: readonly SignalName[] = [
+  "composite",
+  "keyword",
+  "graph",
+  "warmth",
+] as const;
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -31,6 +37,15 @@ interface RankEntry {
   note: ScoredNote;
 }
 
+type SignalScoreMap = {
+  composite?: number;
+  keyword?: number;
+  graph?: number;
+  warmth?: number;
+  rrf_base?: number;
+  rrf?: number;
+};
+
 /** Build a title -> { rank, score, note } lookup for a single signal. */
 function buildIndex(notes: ScoredNote[]): Map<string, RankEntry> {
   const map = new Map<string, RankEntry>();
@@ -39,6 +54,28 @@ function buildIndex(notes: ScoredNote[]): Map<string, RankEntry> {
     map.set(n.title, { rank: i, score: n.score, note: n });
   }
   return map;
+}
+
+export function normalizeSignalWeights(
+  weights: RetrievalConfig["signal_weights"],
+): RetrievalConfig["signal_weights"] {
+  const total = SIGNAL_NAMES.reduce((sum, name) => sum + Math.max(0, weights[name] ?? 0), 0);
+  if (total <= 0) {
+    const equal = 1 / SIGNAL_NAMES.length;
+    return {
+      composite: equal,
+      keyword: equal,
+      graph: equal,
+      warmth: equal,
+    };
+  }
+
+  return {
+    composite: Math.max(0, weights.composite) / total,
+    keyword: Math.max(0, weights.keyword) / total,
+    graph: Math.max(0, weights.graph) / total,
+    warmth: Math.max(0, weights.warmth) / total,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -58,13 +95,14 @@ export function fuseScoreWeightedRRF(
   config: RetrievalConfig,
 ): ScoredNote[] {
   const k = config.rrf_k;
-  const weights = config.signal_weights;
+  const weights = normalizeSignalWeights(config.signal_weights);
 
   // Build per-signal indexes
   const indexes: Record<SignalName, Map<string, RankEntry>> = {
     composite: buildIndex(signals.composite),
     keyword: buildIndex(signals.keyword),
     graph: buildIndex(signals.graph),
+    warmth: buildIndex(signals.warmth),
   };
 
   // Collect unique titles
@@ -81,13 +119,9 @@ export function fuseScoreWeightedRRF(
   const titleArray = Array.from(titles);
   for (let ti = 0; ti < titleArray.length; ti++) {
     const title = titleArray[ti];
+    let baseScore = 0;
     let fusedScore = 0;
-    const signalScores: {
-      composite?: number;
-      keyword?: number;
-      graph?: number;
-      rrf?: number;
-    } = {};
+    const signalScores: SignalScoreMap = {};
 
     // Merge metadata and spaces from whichever signal provides them
     let metadata: Record<string, unknown> | undefined;
@@ -97,7 +131,11 @@ export function fuseScoreWeightedRRF(
       const entry = indexes[name].get(title);
       if (entry) {
         const w = weights[name];
-        fusedScore += (w * entry.score) / (k + entry.rank + 1);
+        const contribution = (w * entry.score) / (k + entry.rank + 1);
+        fusedScore += contribution;
+        if (name !== "warmth") {
+          baseScore += contribution;
+        }
         signalScores[name] = entry.score;
 
         if (entry.note.metadata && !metadata) metadata = entry.note.metadata;
@@ -105,6 +143,7 @@ export function fuseScoreWeightedRRF(
       }
     }
 
+    signalScores.rrf_base = baseScore;
     signalScores.rrf = fusedScore;
 
     const fused: ScoredNote = {
@@ -142,6 +181,7 @@ export function fuseSimpleRRF(
     composite: buildIndex(signals.composite),
     keyword: buildIndex(signals.keyword),
     graph: buildIndex(signals.graph),
+    warmth: buildIndex(signals.warmth),
   };
 
   // Collect unique titles
@@ -158,13 +198,9 @@ export function fuseSimpleRRF(
   const titleArray = Array.from(titles);
   for (let ti = 0; ti < titleArray.length; ti++) {
     const title = titleArray[ti];
+    let baseScore = 0;
     let fusedScore = 0;
-    const signalScores: {
-      composite?: number;
-      keyword?: number;
-      graph?: number;
-      rrf?: number;
-    } = {};
+    const signalScores: SignalScoreMap = {};
 
     let metadata: Record<string, unknown> | undefined;
     let spaces: ScoredNote["spaces"] | undefined;
@@ -172,7 +208,11 @@ export function fuseSimpleRRF(
     for (const name of SIGNAL_NAMES) {
       const entry = indexes[name].get(title);
       if (entry) {
-        fusedScore += 1 / (k + entry.rank + 1);
+        const contribution = 1 / (k + entry.rank + 1);
+        fusedScore += contribution;
+        if (name !== "warmth") {
+          baseScore += contribution;
+        }
         signalScores[name] = entry.score;
 
         if (entry.note.metadata && !metadata) metadata = entry.note.metadata;
@@ -180,6 +220,7 @@ export function fuseSimpleRRF(
       }
     }
 
+    signalScores.rrf_base = baseScore;
     signalScores.rrf = fusedScore;
 
     const fused: ScoredNote = {

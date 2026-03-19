@@ -57,7 +57,7 @@ Start a session. The agent receives its identity automatically and begins onboar
 
 - **Persistent identity.** Agents wake up as themselves. Name, personality, goals, methodology travel with the vault across sessions, clients, and machines.
 
-- **Three-signal retrieval.** Not just vector search. Semantic embeddings + BM25 keyword matching + PageRank graph importance, fused through Reciprocal Rank Fusion with automatic intent classification. ~850 tokens per query regardless of vault size.
+- **Four-signal retrieval.** Not just vector search. Semantic embeddings + BM25 keyword matching + PageRank graph importance + associative warmth, fused through Reciprocal Rank Fusion with automatic intent classification. Warmth is inspectable and now influences ranked retrieval directly.
 
 - **Knowledge graph.** Every `[[wiki-link]]` is a graph edge. PageRank authority, Louvain community detection, betweenness centrality, orphan and dangling link detection. Structure is queryable.
 
@@ -89,13 +89,13 @@ A typical session costs **~$0.10** with Ori. Without it: **~$6.00+**.
 ## The Stack
 
 ```
-Layer 4: MCP Server (14 tools, 5 resources)     any agent talks to this
-Layer 3: Three-Signal Retrieval Engine           semantic + keyword + graph
+Layer 4: MCP Server (15 tools, 5 resources)     any agent talks to this
+Layer 3: Four-Signal Retrieval Engine            semantic + keyword + graph + warmth
 Layer 2: Knowledge Graph + Vitality Model        wiki-links, ACT-R decay, spreading activation
 Layer 1: Markdown files on disk                  git-friendly, human-readable, portable
 ```
 
-14 MCP tools. 5 resources. 16 CLI commands. 442 tests.
+15 MCP tools. 5 resources. 16 CLI commands. 455 tests.
 
 ---
 
@@ -128,7 +128,7 @@ Identity persists. Knowledge lives and dies by relevance. Operational state burn
                     |                   |
                     |  instructions     |   identity auto-injected at connect
                     |  resources        |   5 readable endpoints (ori://)
-                    |  14 tools         |   full memory operations
+                    |  15 tools         |   full memory operations
                     +-------------------+
                               |
           +-------------------+-------------------+
@@ -169,7 +169,8 @@ Identity persists. Knowledge lives and dies by relevance. Operational state burn
 | `ori_promote` | Promote with classification, linking, and area assignment |
 | `ori_validate` | Schema validation against templates |
 | `ori_query` | Graph queries: orphans, dangling, backlinks, cross-project |
-| `ori_query_ranked` | Three-signal retrieval with spreading activation |
+| `ori_query_ranked` | Four-signal retrieval with spreading activation and warmth comparison |
+| `ori_warmth` | Inspect the current associative warmth field without retrieving note content |
 | `ori_query_similar` | Semantic search (vector only, faster) |
 | `ori_query_important` | PageRank authority ranking |
 | `ori_query_fading` | Vitality-based decay detection |
@@ -198,7 +199,7 @@ ori query orphans                 # Notes with no incoming links
 ori query dangling                # Broken wiki-links
 ori query backlinks <note>        # What links to this note
 ori query cross-project           # Multi-project notes
-ori query ranked <query>          # Three-signal retrieval
+ori query ranked <query>          # Four-signal retrieval
 ori query similar <query>         # Semantic search
 ori query important               # PageRank ranking
 ori query fading                  # Vitality detection

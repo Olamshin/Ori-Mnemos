@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { runStatus } from "./status.js";
 import {
   runQueryOrphans,
@@ -16,12 +17,32 @@ import { runAdd } from "./add.js";
 import { runValidate } from "./validate.js";
 import { runHealth } from "./health.js";
 import { runPromote } from "./promote.js";
-import { runQueryRanked, runQuerySimilar } from "./search.js";
+import { runQueryRanked, runQuerySimilar, runQueryWarmth } from "./search.js";
 import { runIndexBuild } from "./indexcmd.js";
 import { runPrune } from "./prune.js";
 import { findVaultRootWithSource, getGlobalVaultPath, getVaultPaths, type VaultPaths } from "../core/vault.js";
 import { runInit } from "./init.js";
 import { GraphCache } from "../core/graph.js";
+import { initDB } from "../core/engine.js";
+// Retrieval intelligence
+import { initQValueTables, batchUpdateQ } from "../core/qvalue.js";
+import { SessionRewardAccumulator } from "../core/reward.js";
+import {
+  initCoOccurrenceTables,
+  extractCoOccurrencePairs,
+  recomputeAllNPMI,
+  runHomeostasis,
+  bootstrapFromWikiLinks,
+} from "../core/cooccurrence.js";
+import {
+  initStageTables,
+  loadStage,
+  saveStage,
+  computeStageReward,
+  STAGE_CONFIGS,
+} from "../core/stage-learner.js";
+import { StageTracker } from "../core/stage-tracker.js";
+import type Database from "better-sqlite3";
 
 let vaultDir: string;
 const graphCache = new GraphCache();
@@ -142,8 +163,90 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
   const paths = getVaultPaths(vaultDir);
   const instructions = await buildInstructions(paths, autoCreated);
 
+  // ─── Retrieval Intelligence: Session lifecycle ───
+  const sessionId = crypto.randomUUID();
+  const rewardAccumulator = new SessionRewardAccumulator(sessionId);
+  const sessionStageTracker = new StageTracker();
+  let sessionQueryFeatures: number[] | null = null;
+
+  // Open persistent DB for intelligence layers
+  const intelligenceDbPath = path.resolve(vaultDir, ".ori", "embeddings.db");
+  let intelligenceDb: Database.Database | null = null;
+  try {
+    await fs.access(intelligenceDbPath);
+    intelligenceDb = initDB(intelligenceDbPath);
+    initQValueTables(intelligenceDb);
+    initCoOccurrenceTables(intelligenceDb);
+    initStageTables(intelligenceDb);
+  } catch {
+    // DB doesn't exist yet — intelligence layers will activate after first ori_index_build
+  }
+
+  // Session-end flush: update all 3 intelligence layers
+  let sessionFlushed = false;
+  const flushSession = () => {
+    if (sessionFlushed || !intelligenceDb) return;
+    sessionFlushed = true;
+
+    try {
+      const db = intelligenceDb;
+      const tx = db.transaction(() => {
+        // Layer 2: Co-occurrence edges from retrieval log
+        try {
+          extractCoOccurrencePairs(db, sessionId);
+          recomputeAllNPMI(db);
+          runHomeostasis(db);
+        } catch {
+          // retrieval_log may be empty — skip silently
+        }
+
+        // Layer 1: Q-value updates from reward signals
+        if (rewardAccumulator.hasData()) {
+          const rewards = rewardAccumulator.computeRewards(db);
+          batchUpdateQ(db, rewards, sessionId);
+        }
+
+        // Layer 3: Stage meta-learning updates
+        if (sessionStageTracker.hasResults() && sessionQueryFeatures) {
+          const stages = STAGE_CONFIGS.map((c) => loadStage(db, c));
+          for (const result of sessionStageTracker.getResults()) {
+            const stage = stages.find((s) => s.config.id === result.stageId);
+            if (!stage) continue;
+            const reward = computeStageReward(
+              result.qualityBefore,
+              result.qualityAfter,
+              result.computeMs,
+            );
+            stage.update(sessionQueryFeatures, reward);
+            saveStage(db, stage);
+          }
+        }
+      });
+      tx();
+    } catch {
+      // Best-effort flush — don't crash the process
+    }
+
+    try {
+      intelligenceDb?.close();
+    } catch {
+      // Already closed or never opened
+    }
+  };
+
+  // Register shutdown handlers
+  process.on("beforeExit", flushSession);
+  process.on("SIGINT", () => {
+    flushSession();
+    process.exit(0);
+  });
+  process.on("SIGTERM", () => {
+    flushSession();
+    process.exit(0);
+  });
+
   const server = new McpServer(
-    { name: "ori-memory", version: "0.3.5" },
+    { name: "ori-memory", version: "0.4.0" },
     { instructions },
   );
 
@@ -236,7 +339,7 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
         payload.firstRun = isFirstRun(identity);
       }
 
-      // Quick zone scan — check if boosts table has data (indicates prune has run)
+      // Quick zone scan — check boosts + index health
       // Lightweight: do NOT recompute all vitalities during orient
       try {
         const dbPath = path.resolve(vaultDir, ".ori", "embeddings.db");
@@ -246,11 +349,51 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
         const boostCount = (
           db.prepare("SELECT COUNT(*) as cnt FROM boosts").get() as { cnt: number }
         ).cnt;
-        db.close();
         if (boostCount > 0) {
           payload.activationActive = true;
           payload.boostCount = boostCount;
         }
+
+        // Index health: coverage + freshness
+        const indexedCount = (
+          db.prepare("SELECT COUNT(*) as cnt FROM embeddings").get() as { cnt: number }
+        ).cnt;
+        const metaRows = db
+          .prepare("SELECT key, value FROM meta")
+          .all() as Array<{ key: string; value: string }>;
+        db.close();
+
+        const meta: Record<string, string> = {};
+        for (const row of metaRows) meta[row.key] = row.value;
+
+        // Count actual notes on disk
+        let noteFileCount = 0;
+        try {
+          const dirents = await fs.readdir(paths.notes, { withFileTypes: true });
+          noteFileCount = dirents.filter(d => d.isFile() && d.name.endsWith(".md")).length;
+        } catch { /* notes dir missing */ }
+
+        const staleCount = Math.max(0, noteFileCount - indexedCount);
+        const builtAt = meta.built_at ?? null;
+        const hoursSinceBuild = builtAt
+          ? (Date.now() - new Date(builtAt).getTime()) / 3_600_000
+          : null;
+
+        payload.indexHealth = {
+          indexed: indexedCount,
+          totalNotes: noteFileCount,
+          stale: staleCount,
+          coveragePercent: noteFileCount > 0
+            ? Math.round((indexedCount / noteFileCount) * 100)
+            : 100,
+          builtAt,
+          hoursSinceBuild: hoursSinceBuild !== null ? Math.round(hoursSinceBuild * 10) / 10 : null,
+          warning: staleCount > 10
+            ? `${staleCount} notes not indexed — warmth signal is degraded. Run ori_index_build.`
+            : hoursSinceBuild !== null && hoursSinceBuild > 48
+              ? `Index is ${Math.round(hoursSinceBuild)}h old — consider running ori_index_build.`
+              : null,
+        };
       } catch {
         // No DB or no boosts table yet — skip
       }
@@ -299,6 +442,9 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
       // Ensure parent directory exists
       await fs.mkdir(path.dirname(filePath), { recursive: true });
       await fs.writeFile(filePath, content, "utf8");
+
+      // Log update event to reward accumulator
+      rewardAccumulator.logUpdate(file);
 
       return textResult({
         success: true,
@@ -362,6 +508,12 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
         type: type ?? "insight",
         content: content ?? undefined,
       });
+
+      // Log to reward accumulator for forward citation detection
+      if (result.success) {
+        rewardAccumulator.logAdd(title, content ?? "");
+      }
+
       return textResult(result);
     }
   );
@@ -420,7 +572,9 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
   // ori_query_ranked
   server.tool(
     "ori_query_ranked",
-    "Full 3-signal engine retrieval (composite + keyword + graph) with intent classification. Returns ranked notes with signal breakdown. Excludes archived notes by default. Triggers spreading activation.",
+    "Full ranked retrieval with Q-value reranking, co-occurrence PPR, and stage meta-learning. " +
+      "4 base signals (composite + keyword + graph + warmth) fused via RRF, then Phase B Q-value reranking. " +
+      "Excludes archived notes by default. Triggers spreading activation.",
     {
       query: z.string().describe("Natural language search query"),
       limit: z.number().optional().describe("Max results (default 10)"),
@@ -432,6 +586,40 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
         query,
         limit,
         include_archived ? false : true,
+        await graphCache.get(paths.notes),
+        intelligenceDb ?? undefined,
+        sessionId,
+        sessionStageTracker,
+      );
+
+      // Log retrievals to reward accumulator for session-end credit assignment
+      if (result.success && result.data.results.length > 0) {
+        const intent = result.data.intent ?? "semantic";
+        for (const [rank, note] of result.data.results.entries()) {
+          rewardAccumulator.logRetrieval(note.title, rank, query, intent);
+        }
+        // Capture query features for stage meta-learning (use last query's features)
+        const { extractQueryFeatures } = await import("../core/stage-learner.js");
+        sessionQueryFeatures = extractQueryFeatures(query, 0, result.data.count, 0);
+      }
+
+      return textResult(result);
+    }
+  );
+
+  // ori_warmth
+  server.tool(
+    "ori_warmth",
+    "Associative warmth field for the current context. Returns low-token note titles, scores, and sources showing what memory is resonating before and alongside retrieval.",
+    {
+      context: z.string().describe("Current conversation text or retrieval context"),
+      limit: z.number().optional().describe("Max warmth signals to return (default 20)"),
+    },
+    async ({ context, limit }) => {
+      const result = await runQueryWarmth(
+        vaultDir,
+        context,
+        limit,
         await graphCache.get(paths.notes),
       );
       return textResult(result);
@@ -518,13 +706,29 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
   // ori_index_build
   server.tool(
     "ori_index_build",
-    "Build or update the embedding index. Only re-embeds changed notes unless force=true.",
+    "Build or update the embedding index. Only re-embeds changed notes unless force=true. " +
+      "Also bootstraps co-occurrence edges from wiki-link structure.",
     {
       force: z.boolean().optional().describe("Rebuild all embeddings (default false)"),
     },
     async ({ force }) => {
       const result = await runIndexBuild(vaultDir, force === true);
       graphCache.invalidate();
+
+      // Bootstrap co-occurrence edges from wiki-links (Layer 2 day-0 edges)
+      if (intelligenceDb) {
+        try {
+          const linkGraph = await graphCache.get(paths.notes);
+          const noteLinks = new Map<string, Set<string>>();
+          for (const [src, targets] of linkGraph.outgoing) {
+            noteLinks.set(src, targets);
+          }
+          bootstrapFromWikiLinks(intelligenceDb, noteLinks);
+        } catch {
+          // Non-critical — bootstrap is best-effort
+        }
+      }
+
       return textResult(result);
     }
   );

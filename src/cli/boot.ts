@@ -229,5 +229,5 @@ export async function runBootSequence(initResult: InitResult, targetDir: string)
 function getVersion(): string {
   // Best effort — read from package.json at runtime would require fs
   // Just hardcode the current version; state.version is informational
-  return "0.3.5";
+  return "0.4.0";
 }

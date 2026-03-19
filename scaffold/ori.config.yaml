@@ -67,10 +67,21 @@ retrieval:
   candidate_multiplier: 5
   rrf_k: 60
   signal_weights:
-    composite: 2.0
-    keyword: 1.0
-    graph: 1.5
+    composite: 0.36
+    keyword: 0.18
+    graph: 0.26
+    warmth: 0.20
   exploration_budget: 0.10
+
+warmth:
+  enabled: true
+  surprise_threshold: 0.15
+  activation_threshold: 0.35
+  ppr_alpha: 0.15
+  ppr_iterations: 20
+  graph_weight: 0.3
+  max_results: 20
+  shadow_compare_enabled: true
 
 bm25:
   k1: 1.2

@@ -17,7 +17,7 @@ import { runPromote } from "./cli/promote.js";
 import { runArchive } from "./cli/archive.js";
 import { runBridgeClaudeCode, runBridgeClaudeCodeGlobal, runBridgeCursor, runBridgeGeneric, runBridgeStatus } from "./cli/bridge.js";
 import { runServeMcp } from "./cli/serve.js";
-import { runQueryRanked, runQuerySimilar } from "./cli/search.js";
+import { runQueryRanked, runQuerySimilar, runQueryWarmthAudit } from "./cli/search.js";
 import { runIndexBuild, runIndexStatus } from "./cli/indexcmd.js";
 import { runGraphMetrics, runGraphCommunities } from "./cli/graphcmd.js";
 import { runPrune } from "./cli/prune.js";
@@ -45,7 +45,7 @@ program
   .description(
     "Ori Mnemos - markdown-native cognitive harness for persistent agent memory"
   )
-  .version("0.3.5");
+  .version("0.4.0");
 
 program
   .command("init")
@@ -74,8 +74,8 @@ program
 
 program
   .command("query")
-  .argument("<kind>", "orphans | dangling | backlinks | cross-project | ranked | similar | important | fading")
-  .argument("[note]", "note title for backlinks, or query text for ranked/similar")
+  .argument("<kind>", "orphans | dangling | backlinks | cross-project | ranked | similar | important | fading | warmth-audit")
+  .argument("[note]", "note title for backlinks, query text for ranked/similar, or query filter for warmth-audit")
   .option("--limit <n>", "max results", "10")
   .option("--threshold <n>", "vitality threshold for fading", "0.3")
   .action(async (kind: string, note: string | undefined, options: { limit?: string; threshold?: string }) => {
@@ -113,6 +113,13 @@ program
         break;
       case "fading":
         result = await runQueryFading(process.cwd(), options.threshold ? parseFloat(options.threshold) : undefined);
+        break;
+      case "warmth-audit":
+        result = await runQueryWarmthAudit(
+          process.cwd(),
+          note,
+          options.limit ? parseInt(options.limit, 10) : undefined,
+        );
         break;
       default:
         throw new Error(`Unknown query kind: ${kind}`);
