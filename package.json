@@ -2,7 +2,7 @@
   "name": "ori-memory",
   "version": "0.4.0",
   "mcpName": "io.github.aayoawoyemi/ori-memory",
-  "description": "Persistent memory for AI agents — local-first, markdown-native, no cloud. Knowledge graph + three-signal retrieval (semantic + BM25 + PageRank). Agents wake up knowing who they are across sessions. MCP server for Claude, Cursor, Windsurf, Cline.",
+  "description": "Cognitive architecture for persistent AI agent memory. Knowledge graph with learning retrieval, ACT-R decay, and spreading activation. Markdown-native, local-first, zero cloud. MCP server + CLI.",
   "keywords": [
     "ai",
     "agent",

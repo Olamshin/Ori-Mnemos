@@ -2,18 +2,18 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.aayoawoyemi/ori-memory",
   "title": "Ori Mnemos — Persistent Agent Memory",
-  "description": "Local-first persistent memory for AI agents. Knowledge graph, semantic search, identity.",
+  "description": "Cognitive architecture for persistent AI agent memory. Knowledge graph with learning retrieval, ACT-R decay, and spreading activation. Markdown-native, local-first, zero cloud. MCP server + CLI.",
   "websiteUrl": "https://orimnemos.com",
   "repository": {
     "url": "https://github.com/aayoawoyemi/Ori-Mnemos",
     "source": "github"
   },
-  "version": "0.3.4",
+  "version": "0.4.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "ori-memory",
-      "version": "0.3.4",
+      "version": "0.4.0",
       "transport": {
         "type": "stdio"
       }
