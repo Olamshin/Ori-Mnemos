@@ -1,3 +1,21 @@
+/* ------------------------------------------------------------------ */
+/*  Chat interface (generic LLM calls for explore recursion)           */
+/* ------------------------------------------------------------------ */
+
+export interface ChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export interface ChatOptions {
+  maxTokens?: number;
+  temperature?: number;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Enhancement types (note promotion)                                 */
+/* ------------------------------------------------------------------ */
+
 export type VaultContext = {
   existingTitles: string[];
   recentNotes: Array<{ title: string; type: string; description: string }>;
@@ -36,6 +54,9 @@ export interface LlmProvider {
     },
     context: VaultContext
   ): Promise<EnhancementSuggestions>;
+
+  /** Generic chat completion for explore recursion and other internal reasoning. */
+  chat(messages: ChatMessage[], options?: ChatOptions): Promise<string>;
 }
 
 /**
@@ -44,6 +65,9 @@ export interface LlmProvider {
 export class NullProvider implements LlmProvider {
   async enhance(): Promise<EnhancementSuggestions> {
     return {};
+  }
+  async chat(): Promise<string> {
+    return "";
   }
 }
 

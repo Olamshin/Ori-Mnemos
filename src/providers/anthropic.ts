@@ -2,6 +2,8 @@ import type {
   LlmProvider,
   VaultContext,
   EnhancementSuggestions,
+  ChatMessage,
+  ChatOptions,
 } from "../core/llm.js";
 
 const SYSTEM_PROMPT = `You are a knowledge management assistant for Ori Mnemos, a markdown-native memory system.
@@ -106,6 +108,43 @@ export class AnthropicProvider implements LlmProvider {
     } catch {
       // LLM failures should never block promotion
       return {};
+    }
+  }
+
+  async chat(messages: ChatMessage[], options?: ChatOptions): Promise<string> {
+    try {
+      // Anthropic separates system from messages
+      const systemMsg = messages.find((m) => m.role === "system")?.content ?? "";
+      const userMessages = messages
+        .filter((m) => m.role !== "system")
+        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+      const response = await fetch(
+        "https://api.anthropic.com/v1/messages",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": this.apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: this.model,
+            max_tokens: options?.maxTokens ?? 512,
+            system: systemMsg,
+            messages: userMessages,
+          }),
+        }
+      );
+
+      if (!response.ok) return "";
+
+      const data = (await response.json()) as {
+        content?: Array<{ type: string; text?: string }>;
+      };
+      return data.content?.[0]?.text?.trim() ?? "";
+    } catch {
+      return "";
     }
   }
 }

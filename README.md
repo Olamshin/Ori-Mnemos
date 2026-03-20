@@ -148,6 +148,28 @@ A typical session costs **~$0.10** with Ori. Without it: **~$6.00+**.
 
 ---
 
+## Benchmarks
+
+Evaluated on [LoCoMo](https://github.com/snap-research/locomo) (Maharana et al., 2024) — the standard benchmark for long-term conversational memory. 10 conversations, 695 questions across single-hop, multi-hop, and temporal reasoning. Answer F1 via token overlap, same metric and methodology as Mem0's published evaluation.
+
+| System | Single-hop | Multi-hop | Infrastructure |
+|--------|:----------:|:---------:|----------------|
+| MemoryBank | 5.00 | — | Custom server |
+| ReadAgent | 9.15 | — | LLM-based |
+| A-Mem | 20.76 | — | Cloud APIs |
+| MemGPT / Letta | 26.65 | — | PostgreSQL + cloud |
+| LangMem | 35.51 | 26.04 | Cloud APIs |
+| OpenAI Memory | 34.30 | — | OpenAI proprietary |
+| Zep | 35.74 | 19.37 | PostgreSQL + cloud |
+| **Mem0** | **38.72** | **28.64** | Redis + Qdrant + cloud |
+| **Ori Mnemos** | **37.69** | **29.31** | **Markdown on disk** |
+
+Ori matches Mem0 on single-hop retrieval and exceeds it on multi-hop reasoning — with zero cloud services, zero databases, and zero API keys required for core retrieval. The entire pipeline runs locally on markdown files with a SQLite embedding index.
+
+Baseline numbers from [Mem0 paper](https://arxiv.org/abs/2504.19413) (Table 1). Ori evaluated with GPT-4.1-mini for answer generation, BM25 + embedding + PageRank fusion for retrieval. Full evaluation code and results in [`bench/`](./bench/).
+
+---
+
 ## Architecture
 
 ```

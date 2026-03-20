@@ -97,6 +97,30 @@ export type WarmthConfig = {
   shadow_compare_enabled: boolean;
 };
 
+export type ExploreConfig = {
+  enabled: boolean;
+  default_limit: number;
+  max_limit: number;
+  ppr_alpha: number;             // 0.45 — HippoRAG (NeurIPS 2024)
+  ppr_iterations: number;
+  seed_count: number;
+  score_decay_threshold: number; // drop notes < this fraction of max PPR score
+  max_depth: number;
+  warmth_seed_blend: number;
+  q_seed_blend: number;
+  max_warmth_only_seeds: number;
+  snippet_preview_length: number;
+  snippet_max_links: number;
+  cooc_blend_beta: number;
+  // Phase 3: Recursion
+  recursive_enabled: boolean;
+  max_recursion_depth: number;
+  max_total_notes: number;
+  convergence_threshold: number;
+  sub_question_max: number;
+  ppr_iteration_decay: number;  // multiply PPR iterations per recursion depth
+};
+
 export type OriConfig = {
   vault: {
     version: string;
@@ -112,6 +136,7 @@ export type OriConfig = {
   ips: IPSConfig;
   activation: ActivationConfig;
   warmth: WarmthConfig;
+  explore: ExploreConfig;
 };
 
 const DEFAULT_PROMOTE_CONFIG: PromoteConfig = {
@@ -181,6 +206,29 @@ const DEFAULT_WARMTH_CONFIG: WarmthConfig = {
   shadow_compare_enabled: true,
 };
 
+const DEFAULT_EXPLORE_CONFIG: ExploreConfig = {
+  enabled: true,
+  default_limit: 15,
+  max_limit: 30,
+  ppr_alpha: 0.45,             // HippoRAG (NeurIPS 2024, arxiv 2405.14831)
+  ppr_iterations: 30,
+  seed_count: 10,
+  score_decay_threshold: 0.15, // drop notes scoring < 15% of max PPR score
+  max_depth: 2,
+  warmth_seed_blend: 0.3,
+  q_seed_blend: 0.15,
+  max_warmth_only_seeds: 5,
+  snippet_preview_length: 150,
+  snippet_max_links: 8,
+  cooc_blend_beta: 0.3,
+  recursive_enabled: true,
+  max_recursion_depth: 2,
+  max_total_notes: 30,
+  convergence_threshold: 0.15,
+  sub_question_max: 3,
+  ppr_iteration_decay: 0.67,
+};
+
 const DEFAULT_CONFIG: OriConfig = {
   vault: { version: "0.1" },
   templates: {
@@ -200,6 +248,7 @@ const DEFAULT_CONFIG: OriConfig = {
   ips: { ...DEFAULT_IPS_CONFIG },
   activation: { ...DEFAULT_ACTIVATION_CONFIG },
   warmth: { ...DEFAULT_WARMTH_CONFIG },
+  explore: { ...DEFAULT_EXPLORE_CONFIG },
 };
 
 export function applyConfigDefaults(raw: Partial<OriConfig>): OriConfig {
@@ -216,6 +265,7 @@ export function applyConfigDefaults(raw: Partial<OriConfig>): OriConfig {
   const rawIPS = (raw as Record<string, unknown>).ips as Partial<IPSConfig> | undefined;
   const rawActivation = (raw as Record<string, unknown>).activation as Partial<ActivationConfig> | undefined;
   const rawWarmth = (raw as Record<string, unknown>).warmth as Partial<WarmthConfig> | undefined;
+  const rawExplore = (raw as Record<string, unknown>).explore as Partial<ExploreConfig> | undefined;
 
   return {
     vault: {
@@ -321,6 +371,28 @@ export function applyConfigDefaults(raw: Partial<OriConfig>): OriConfig {
       graph_weight: rawWarmth?.graph_weight ?? DEFAULT_WARMTH_CONFIG.graph_weight,
       max_results: rawWarmth?.max_results ?? DEFAULT_WARMTH_CONFIG.max_results,
       shadow_compare_enabled: rawWarmth?.shadow_compare_enabled ?? DEFAULT_WARMTH_CONFIG.shadow_compare_enabled,
+    },
+    explore: {
+      enabled: rawExplore?.enabled ?? DEFAULT_EXPLORE_CONFIG.enabled,
+      default_limit: rawExplore?.default_limit ?? DEFAULT_EXPLORE_CONFIG.default_limit,
+      max_limit: rawExplore?.max_limit ?? DEFAULT_EXPLORE_CONFIG.max_limit,
+      ppr_alpha: rawExplore?.ppr_alpha ?? DEFAULT_EXPLORE_CONFIG.ppr_alpha,
+      ppr_iterations: rawExplore?.ppr_iterations ?? DEFAULT_EXPLORE_CONFIG.ppr_iterations,
+      seed_count: rawExplore?.seed_count ?? DEFAULT_EXPLORE_CONFIG.seed_count,
+      score_decay_threshold: rawExplore?.score_decay_threshold ?? DEFAULT_EXPLORE_CONFIG.score_decay_threshold,
+      max_depth: rawExplore?.max_depth ?? DEFAULT_EXPLORE_CONFIG.max_depth,
+      warmth_seed_blend: rawExplore?.warmth_seed_blend ?? DEFAULT_EXPLORE_CONFIG.warmth_seed_blend,
+      q_seed_blend: rawExplore?.q_seed_blend ?? DEFAULT_EXPLORE_CONFIG.q_seed_blend,
+      max_warmth_only_seeds: rawExplore?.max_warmth_only_seeds ?? DEFAULT_EXPLORE_CONFIG.max_warmth_only_seeds,
+      snippet_preview_length: rawExplore?.snippet_preview_length ?? DEFAULT_EXPLORE_CONFIG.snippet_preview_length,
+      snippet_max_links: rawExplore?.snippet_max_links ?? DEFAULT_EXPLORE_CONFIG.snippet_max_links,
+      cooc_blend_beta: rawExplore?.cooc_blend_beta ?? DEFAULT_EXPLORE_CONFIG.cooc_blend_beta,
+      recursive_enabled: rawExplore?.recursive_enabled ?? DEFAULT_EXPLORE_CONFIG.recursive_enabled,
+      max_recursion_depth: rawExplore?.max_recursion_depth ?? DEFAULT_EXPLORE_CONFIG.max_recursion_depth,
+      max_total_notes: rawExplore?.max_total_notes ?? DEFAULT_EXPLORE_CONFIG.max_total_notes,
+      convergence_threshold: rawExplore?.convergence_threshold ?? DEFAULT_EXPLORE_CONFIG.convergence_threshold,
+      sub_question_max: rawExplore?.sub_question_max ?? DEFAULT_EXPLORE_CONFIG.sub_question_max,
+      ppr_iteration_decay: rawExplore?.ppr_iteration_decay ?? DEFAULT_EXPLORE_CONFIG.ppr_iteration_decay,
     },
   };
 }

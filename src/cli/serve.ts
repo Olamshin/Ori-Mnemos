@@ -18,6 +18,7 @@ import { runValidate } from "./validate.js";
 import { runHealth } from "./health.js";
 import { runPromote } from "./promote.js";
 import { runQueryRanked, runQuerySimilar, runQueryWarmth } from "./search.js";
+import { runExplore } from "./explore.js";
 import { runIndexBuild } from "./indexcmd.js";
 import { runPrune } from "./prune.js";
 import { findVaultRootWithSource, getGlobalVaultPath, getVaultPaths, type VaultPaths } from "../core/vault.js";
@@ -612,6 +613,51 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
         // Capture query features for stage meta-learning (use last query's features)
         const { extractQueryFeatures } = await import("../core/stage-learner.js");
         sessionQueryFeatures = extractQueryFeatures(query, 0, result.data.count, 0);
+      }
+
+      return textResult(result);
+    }
+  );
+
+  // ori_explore
+  server.tool(
+    "ori_explore",
+    "Deep memory exploration via PPR graph traversal. Propagates through wiki-links " +
+      "at exploration-tuned parameters (α=0.45), returns ranked notes with content snippets. " +
+      "Use for multi-hop questions, connection discovery, and deep recall. " +
+      "Heavier than ori_query_ranked but finds notes flat retrieval misses.",
+    {
+      query: z.string().describe("Natural language query to explore"),
+      limit: z.number().optional().describe("Max notes to return (default 15, max 30)"),
+      depth: z.number().optional().describe("1=shallow, 2=standard, 3=deep (default 2)"),
+      include_content: z.boolean().optional().describe("Include note snippets (default true)"),
+      include_archived: z.boolean().optional().describe("Include archived notes (default false)"),
+      recursive: z.boolean().optional().describe(
+        "Enable recursive sub-question decomposition via LLM (requires llm config, default true)"
+      ),
+    },
+    async ({ query, limit, depth, include_content, include_archived, recursive }) => {
+      const result = await runExplore(
+        vaultDir,
+        query,
+        {
+          limit: limit ?? undefined,
+          depth: depth ?? undefined,
+          includeContent: include_content ?? undefined,
+          excludeArchived: include_archived ? false : true,
+          recursive: recursive ?? undefined,
+        },
+        await graphCache.get(paths.notes),
+        intelligenceDb ?? undefined,
+        sessionId,
+        sessionStageTracker,
+      );
+
+      if (result.success && result.data.results.length > 0) {
+        const intent = result.data.intent ?? "semantic";
+        for (const [rank, note] of result.data.results.entries()) {
+          rewardAccumulator.logRetrieval(note.title, rank, query, intent);
+        }
       }
 
       return textResult(result);

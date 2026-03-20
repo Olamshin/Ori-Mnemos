@@ -2,6 +2,8 @@ import type {
   LlmProvider,
   VaultContext,
   EnhancementSuggestions,
+  ChatMessage,
+  ChatOptions,
 } from "../core/llm.js";
 
 const SYSTEM_PROMPT = `You are a knowledge management assistant for Ori Mnemos, a markdown-native memory system.
@@ -111,6 +113,36 @@ export class OpenAICompatProvider implements LlmProvider {
     } catch {
       // LLM failures should never block promotion
       return {};
+    }
+  }
+
+  async chat(messages: ChatMessage[], options?: ChatOptions): Promise<string> {
+    try {
+      const response = await fetch(
+        `${this.baseUrl}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: this.model,
+            max_tokens: options?.maxTokens ?? 512,
+            temperature: options?.temperature ?? 0,
+            messages: messages.map((m) => ({ role: m.role, content: m.content })),
+          }),
+        }
+      );
+
+      if (!response.ok) return "";
+
+      const data = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      return data.choices?.[0]?.message?.content?.trim() ?? "";
+    } catch {
+      return "";
     }
   }
 }

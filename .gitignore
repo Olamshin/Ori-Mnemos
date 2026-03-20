@@ -57,5 +57,7 @@ tests/mcp/*
 .mcpregistry_registry_token
 mcp-publisher.exe
 
-# Benchmarks (local)
-bench/
+# Benchmark data (large datasets)
+bench/data/
+# Benchmark results (local runs)
+bench/results/

@@ -21,6 +21,7 @@ import { runQueryRanked, runQuerySimilar, runQueryWarmthAudit } from "./cli/sear
 import { runIndexBuild, runIndexStatus } from "./cli/indexcmd.js";
 import { runGraphMetrics, runGraphCommunities } from "./cli/graphcmd.js";
 import { runPrune } from "./cli/prune.js";
+import { runExplore } from "./cli/explore.js";
 
 const program = new Command();
 
@@ -377,6 +378,27 @@ program
       dryRun: !options.apply,
       verbose: options.verbose,
     });
+    console.log(JSON.stringify(result));
+  });
+
+program
+  .command("explore")
+  .argument("<query>", "natural language query to explore")
+  .option("--limit <n>", "max notes to return (default 15)")
+  .option("--depth <n>", "1=shallow, 2=standard, 3=deep (default 2)")
+  .option("--no-recursive", "disable recursive sub-question decomposition")
+  .option("--include-archived", "include archived notes")
+  .action(async (query: string, options: { limit?: string; depth?: string; recursive?: boolean; includeArchived?: boolean }) => {
+    const result = await runExplore(
+      process.cwd(),
+      query,
+      {
+        limit: options.limit ? parseInt(options.limit, 10) : undefined,
+        depth: options.depth ? parseInt(options.depth, 10) : undefined,
+        recursive: options.recursive,
+        excludeArchived: options.includeArchived ? false : true,
+      },
+    );
     console.log(JSON.stringify(result));
   });
 
