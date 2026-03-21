@@ -15,7 +15,7 @@ import { runValidate } from "./cli/validate.js";
 import { runAdd } from "./cli/add.js";
 import { runPromote } from "./cli/promote.js";
 import { runArchive } from "./cli/archive.js";
-import { runBridgeClaudeCode, runBridgeClaudeCodeGlobal, runBridgeCursor, runBridgeGeneric, runBridgeStatus } from "./cli/bridge.js";
+import { runBridgeClaudeCode, runBridgeClaudeCodeGlobal, runBridgeCodex, runBridgeCursor, runBridgeGeneric, runBridgeStatus } from "./cli/bridge.js";
 import { runServeMcp } from "./cli/serve.js";
 import { runQueryRanked, runQuerySimilar, runQueryWarmthAudit } from "./cli/search.js";
 import { runIndexBuild, runIndexStatus } from "./cli/indexcmd.js";
@@ -196,7 +196,7 @@ program
 
 program
   .command("bridge")
-  .argument("<target>", "claude-code | cursor | generic | status")
+  .argument("<target>", "claude-code | cursor | codex | generic | status")
   .option("--global", "legacy shorthand for --scope global")
   .option("--scope <scope>", "install scope: project | global")
   .option("--activation <activation>", "activation mode: auto | manual")
@@ -207,34 +207,55 @@ program
     target: string,
     options: { global?: boolean; scope?: string; activation?: string; vault?: string; uninstall?: boolean; json?: boolean }
   ) => {
-    if (target !== "claude-code" && target !== "cursor" && target !== "generic" && target !== "status") {
+    if (target !== "claude-code" && target !== "cursor" && target !== "codex" && target !== "generic" && target !== "status") {
       throw new Error(`Unknown bridge target: ${target}`);
     }
 
     if (target === "status") {
       const result = await runBridgeStatus(process.cwd());
       if (!options.json) {
+        type ScopedInstall = {
+          installed: boolean;
+          activation: string | null;
+          resolvedVault: string | null;
+          configPaths: string[];
+          details: string[];
+        };
+        type ScopedClientStatus = {
+          project: ScopedInstall;
+          global: ScopedInstall;
+          active: { scope: string; activation: string | null; resolvedVault: string | null } | null;
+        };
+        type CodexStatus = ScopedInstall;
         const data = result.data as {
           precedence: string;
           instructions: string[];
-          clients: Record<string, {
-            project: { installed: boolean; activation: string | null; resolvedVault: string | null; configPaths: string[]; details: string[] };
-            global: { installed: boolean; activation: string | null; resolvedVault: string | null; configPaths: string[]; details: string[] };
-            active: { scope: string; activation: string | null; resolvedVault: string | null } | null;
-          }>;
+          clients: Record<string, ScopedClientStatus | CodexStatus>;
         };
 
         console.log(`Precedence: ${data.precedence}`);
         for (const [client, status] of Object.entries(data.clients)) {
           console.log("");
           console.log(`Client: ${client}`);
-          console.log(`  Active install: ${status.active ? status.active.scope : "none"}`);
-          if (status.active) {
-            console.log(`  Active activation: ${status.active.activation ?? "unknown"}`);
-            console.log(`  Active vault: ${status.active.resolvedVault ?? "(runtime discovery)"}`);
+          if (!("active" in status)) {
+            const install = status as CodexStatus;
+            console.log(`  global: ${install.installed ? "installed" : "not installed"}`);
+            console.log(`    activation: ${install.activation ?? "n/a"}`);
+            console.log(`    vault: ${install.resolvedVault ?? "(none encoded)"}`);
+            console.log(`    checked: ${install.configPaths.join(", ")}`);
+            for (const detail of install.details) {
+            console.log(`    - ${detail}`);
+            }
+            continue;
+          }
+          const scoped = status as ScopedClientStatus;
+          console.log(`  Active install: ${scoped.active ? scoped.active.scope : "none"}`);
+          if (scoped.active) {
+            console.log(`  Active activation: ${scoped.active.activation ?? "unknown"}`);
+            console.log(`  Active vault: ${scoped.active.resolvedVault ?? "(runtime discovery)"}`);
           }
           for (const scope of ["project", "global"] as const) {
-            const install = status[scope];
+            const install = scoped[scope];
             console.log(`  ${scope}: ${install.installed ? "installed" : "not installed"}`);
             console.log(`    activation: ${install.activation ?? "n/a"}`);
             console.log(`    vault: ${install.resolvedVault ?? "(none encoded)"}`);
@@ -272,9 +293,11 @@ program
         : await runBridgeClaudeCode(process.cwd(), request)
       : target === "cursor"
         ? await runBridgeCursor(process.cwd(), request)
+      : target === "codex"
+        ? await runBridgeCodex(process.cwd(), request)
       : await runBridgeGeneric(process.cwd(), request);
 
-    if ((target === "generic" || target === "cursor") && !options.json) {
+    if ((target === "generic" || target === "cursor" || target === "codex") && !options.json) {
       const data = result.data as {
         client: string;
         operation?: string;
@@ -287,6 +310,7 @@ program
         resolvedVault: string | null;
         instructions: string[];
         mcpPath?: string;
+        configPath?: string;
       };
 
       console.log(`Client: ${data.client === "generic" ? "generic MCP client" : data.client}`);
@@ -301,6 +325,9 @@ program
       console.log(`Resolved vault: ${data.resolvedVault ?? "(runtime discovery)"}`);
       if (data.mcpPath) {
         console.log(`MCP config path: ${data.mcpPath}`);
+      }
+      if (data.configPath) {
+        console.log(`Config path: ${data.configPath}`);
       }
       console.log("");
       console.log("Server config:");

@@ -150,7 +150,7 @@ export function extractCoOccurrencePairs(
 }
 
 // --- Per-node homeostasis (Turrigiano) ---
-// FIX: Updates both note_a and note_b edges per node (spec only did note_a)
+// Updates both note_a and note_b edges per node (original spec only covered note_a)
 
 export function runHomeostasis(db: Database.Database): void {
   // Collect per-node mean weights across ALL their edges (both directions)
@@ -193,7 +193,7 @@ export function runHomeostasis(db: Database.Database): void {
 }
 
 // --- Recompute all NPMI weights ---
-// FIX: Uses actual daysSince from last_co_retrieved, not hardcoded 0
+// Uses actual daysSince from last_co_retrieved instead of hardcoded 0
 
 export function recomputeAllNPMI(db: Database.Database): void {
   const totalEvents = (

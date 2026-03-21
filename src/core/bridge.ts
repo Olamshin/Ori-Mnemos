@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { getGlobalVaultPath, isVaultRoot } from "./vault.js";
 
-export type BridgeTarget = "claude-code" | "cursor" | "generic";
+export type BridgeTarget = "claude-code" | "cursor" | "codex" | "generic";
 export type BridgeScope = "project" | "global";
 export type BridgeActivation = "auto" | "manual";
 export type VaultResolutionSource = "explicit" | "project" | "global-default" | "none";
@@ -82,9 +82,18 @@ export async function resolveBridgePlan(request: BridgeRequest): Promise<BridgeP
     );
   }
 
-  if (!request.uninstall && request.target === "generic" && activation === "auto") {
+  if (!request.uninstall && request.target === "codex" && scope === "project") {
     warnings.push(
-      "Generic installs cannot auto-orient by themselves. Treat activation=auto as a request for client-side startup wiring.",
+      "Codex stores MCP servers in ~/.codex/config.toml only. Project scope uses runtime vault discovery from a global MCP entry rather than a separate project config file.",
+    );
+    instructions.push(
+      "Codex project installs write to ~/.codex/config.toml without pinning --vault unless you pass --vault explicitly.",
+    );
+  }
+
+  if (!request.uninstall && (request.target === "generic" || request.target === "codex") && activation === "auto") {
+    warnings.push(
+      `${request.target === "codex" ? "Codex" : "Generic installs"} cannot auto-orient by themselves. Treat activation=auto as a request for client-side startup wiring.`,
     );
     instructions.push(
       "If your client supports startup hooks or startup prompts, call `ori_orient` automatically at session start. Otherwise use manual activation.",
@@ -193,5 +202,15 @@ export function getCursorGlobalPaths() {
     homeDir,
     cursorDir,
     mcpPath: path.join(cursorDir, "mcp.json"),
+  };
+}
+
+export function getCodexGlobalPaths() {
+  const homeDir = os.homedir();
+  const codexDir = path.join(homeDir, ".codex");
+  return {
+    homeDir,
+    codexDir,
+    configPath: path.join(codexDir, "config.toml"),
   };
 }

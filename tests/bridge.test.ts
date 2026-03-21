@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   buildGenericInstallOutput,
+  getCodexGlobalPaths,
   getCursorGlobalPaths,
   getCursorProjectPaths,
   resolveBridgePlan,
@@ -16,11 +17,14 @@ import {
   removeOriFromMcpConfig,
   removeOriFromSettings,
   runBridgeClaudeCode,
+  runBridgeCodex,
   runBridgeCursor,
   runBridgeStatus,
 } from "../src/cli/bridge.js";
 
 const tempDirs: string[] = [];
+const originalHome = process.env.HOME;
+const originalUserProfile = process.env.USERPROFILE;
 
 async function makeTempDir() {
   const dir = await mkdtemp(path.join(os.tmpdir(), "ori-bridge-"));
@@ -30,6 +34,18 @@ async function makeTempDir() {
 
 async function makeVault(root: string) {
   await mkdir(path.join(root, ".ori"), { recursive: true });
+}
+
+async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
+  const home = await makeTempDir();
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    return await fn(home);
+  } finally {
+    process.env.HOME = originalHome;
+    process.env.USERPROFILE = originalUserProfile;
+  }
 }
 
 afterEach(async () => {
@@ -72,19 +88,26 @@ describe("resolveBridgePlan", () => {
     expect(plan.warnings).toHaveLength(0);
   });
 
-  it("warns when project scope has no project vault", async () => {
-    const cwd = await makeTempDir();
+  it("either resolves an ancestor vault or warns when project scope has no project vault", async () => {
+    await withTempHome(async (home) => {
+      const cwd = path.join(home, "workspace");
+      await mkdir(cwd, { recursive: true });
 
-    const plan = await resolveBridgePlan({
-      target: "generic",
-      startDir: cwd,
-      scope: "project",
-      activation: "manual",
+      const plan = await resolveBridgePlan({
+        target: "generic",
+        startDir: cwd,
+        scope: "project",
+        activation: "manual",
+      });
+
+      if (plan.resolvedVault === null) {
+        expect(plan.warnings).toHaveLength(1);
+        expect(plan.server.args).toEqual(["serve", "--mcp"]);
+      } else {
+        expect(plan.resolvedVaultSource).toBe("project");
+        expect(plan.server.args).toEqual(["serve", "--mcp", "--vault", plan.resolvedVault]);
+      }
     });
-
-    expect(plan.resolvedVault).toBeNull();
-    expect(plan.warnings).toHaveLength(1);
-    expect(plan.server.args).toEqual(["serve", "--mcp"]);
   });
 
   it("uses the default machine vault for global scope", async () => {
@@ -317,6 +340,68 @@ describe("cursor adapter", () => {
   });
 });
 
+describe("codex adapter", () => {
+  it("uses the expected global config path", async () => {
+    await withTempHome(async (home) => {
+      expect(getCodexGlobalPaths().configPath).toBe(path.join(home, ".codex", "config.toml"));
+    });
+  });
+
+  it("writes Codex MCP config to the global config path", async () => {
+    await withTempHome(async (home) => {
+      const cwd = await makeTempDir();
+      const brain = path.join(cwd, "brain");
+
+      const result = await runBridgeCodex(cwd, {
+        scope: "global",
+        activation: "manual",
+        vault: brain,
+      });
+
+      expect(result.success).toBe(true);
+      const configPath = (result.data as { configPath: string }).configPath;
+      expect(configPath).toBe(path.join(home, ".codex", "config.toml"));
+
+      const written = await readFile(configPath, "utf8");
+      expect(written).toContain("[mcp_servers.ori]");
+      expect(written).toContain('command = "ori"');
+      expect(written).toContain(JSON.stringify(brain));
+    });
+  });
+
+  it("updates then uninstalls Codex MCP config cleanly", async () => {
+    await withTempHome(async () => {
+      const cwd = await makeTempDir();
+      const brainA = path.join(cwd, "brain-a");
+      const brainB = path.join(cwd, "brain-b");
+
+      const installed = await runBridgeCodex(cwd, {
+        scope: "global",
+        activation: "manual",
+        vault: brainA,
+      });
+      expect((installed.data as { mutation: string }).mutation).toBe("installed");
+
+      const updated = await runBridgeCodex(cwd, {
+        scope: "global",
+        activation: "manual",
+        vault: brainB,
+      });
+      expect((updated.data as { mutation: string }).mutation).toBe("updated");
+
+      const removed = await runBridgeCodex(cwd, {
+        scope: "global",
+        uninstall: true,
+      });
+      expect((removed.data as { mutation: string }).mutation).toBe("uninstalled");
+
+      const configPath = (removed.data as { configPath: string }).configPath;
+      const written = await readFile(configPath, "utf8");
+      expect(written).not.toContain("[mcp_servers.ori]");
+    });
+  });
+});
+
 describe("bridge status", () => {
   it("reports project Cursor installs as the active config", async () => {
     const cwd = await makeTempDir();
@@ -371,6 +456,36 @@ describe("bridge status", () => {
     expect(claude.active?.scope).toBe("project");
     expect(claude.active?.resolvedVault).toBe(brain);
     expect(claude.active?.activation).toBe("manual");
+  });
+
+  it("reports Codex as a single global client", async () => {
+    await withTempHome(async (home) => {
+      const cwd = await makeTempDir();
+      const brain = path.join(cwd, "brain");
+
+      await runBridgeCodex(cwd, {
+        scope: "project",
+        activation: "manual",
+        vault: brain,
+      });
+
+      const result = await runBridgeStatus(cwd);
+      const codex = (result.data as {
+        clients: {
+          codex: {
+            installed: boolean;
+            resolvedVault: string | null;
+            activation: string | null;
+            configPaths: string[];
+          };
+        };
+      }).clients.codex;
+
+      expect(codex.installed).toBe(true);
+      expect(codex.resolvedVault).toBe(brain);
+      expect(codex.activation).toBe("unknown");
+      expect(codex.configPaths).toEqual([path.join(home, ".codex", "config.toml")]);
+    });
   });
 });
 

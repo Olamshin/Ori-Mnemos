@@ -5,6 +5,7 @@ import {
   buildGenericInstallOutput,
   getClaudeGlobalPaths,
   getClaudeProjectPaths,
+  getCodexGlobalPaths,
   getCursorGlobalPaths,
   getCursorProjectPaths,
   resolveBridgePlan,
@@ -156,9 +157,10 @@ type BridgeMutationKind = "installed" | "updated" | "uninstalled" | "noop";
 type BridgeInstallStatus = {
   installed: boolean;
   scope: "project" | "global";
-  client: "claude-code" | "cursor";
+  client: "claude-code" | "cursor" | "codex";
   configPaths: string[];
   mcpPath?: string;
+  configPath?: string;
   settingsPath?: string;
   instructionsPath?: string;
   hooksDir?: string;
@@ -384,6 +386,81 @@ function detectClaudeActivation(settings: SettingsShape | null): BridgeActivatio
   return null;
 }
 
+function buildCodexTable(plan: BridgePlan): string {
+  const lines = ["[mcp_servers.ori]", `command = ${JSON.stringify(plan.server.command)}`];
+
+  if (plan.server.args.length > 0) {
+    lines.push(`args = [${plan.server.args.map((arg) => JSON.stringify(arg)).join(", ")}]`);
+  }
+
+  const envEntries = Object.entries(plan.server.env);
+  if (envEntries.length > 0) {
+    lines.push("[mcp_servers.ori.env]");
+    for (const [key, value] of envEntries) {
+      lines.push(`${key} = ${JSON.stringify(value)}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function codexTableRegex(): RegExp {
+  return /^\[mcp_servers\.ori\]\r?\n(?:.*\r?\n)*?(?=^\[|$(?![\r\n]))/m;
+}
+
+function mergeCodexConfig(existing: string, plan: BridgePlan): string {
+  const table = buildCodexTable(plan);
+  const regex = codexTableRegex();
+  if (regex.test(existing)) {
+    return existing.replace(regex, table);
+  }
+
+  const trimmed = existing.trimEnd();
+  if (trimmed.length === 0) return `${table}\n`;
+  return `${trimmed}\n\n${table}\n`;
+}
+
+function removeOriFromCodexConfig(existing: string): string {
+  const next = existing.replace(codexTableRegex(), "").replace(/\n{3,}/g, "\n\n").trimEnd();
+  return next.length > 0 ? `${next}\n` : "";
+}
+
+function classifyCodexMutation(existing: string, next: string, uninstall = false): BridgeMutationKind {
+  const hadOri = codexTableRegex().test(existing);
+  const hasOri = codexTableRegex().test(next);
+  if (uninstall) return hadOri ? "uninstalled" : "noop";
+  if (!hadOri && hasOri) return "installed";
+  if (hadOri && hasOri && existing !== next) return "updated";
+  return "noop";
+}
+
+async function mergeIntoCodexConfigFile(configPath: string, plan: BridgePlan, uninstall = false): Promise<BridgeMutationKind> {
+  let existing = "";
+  try {
+    existing = await fs.readFile(configPath, "utf8");
+  } catch {
+    // file missing - start fresh
+  }
+
+  const next = uninstall ? removeOriFromCodexConfig(existing) : mergeCodexConfig(existing, plan);
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  await fs.writeFile(configPath, next, "utf8");
+  return classifyCodexMutation(existing, next, uninstall);
+}
+
+function extractVaultFromCodexConfig(content: string | null): string | null {
+  if (!content) return null;
+  const match = content.match(/\[mcp_servers\.ori\][\s\S]*?args\s*=\s*\[(.*?)\]/m);
+  if (!match) return null;
+  const vaultMatch = match[1].match(/"--vault"\s*,\s*"([^"]+)"/);
+  if (!vaultMatch) return null;
+  try {
+    return JSON.parse(`"${vaultMatch[1]}"`) as string;
+  } catch {
+    return vaultMatch[1];
+  }
+}
+
 async function inspectClaudeInstall(startDir: string, scope: "project" | "global"): Promise<BridgeInstallStatus> {
   const paths = scope === "global" ? getClaudeGlobalPaths() : getClaudeProjectPaths(startDir);
   const [settings, mcp, instructions] = await Promise.all([
@@ -438,12 +515,33 @@ async function inspectCursorInstall(startDir: string, scope: "project" | "global
   };
 }
 
+async function inspectCodexInstall(): Promise<BridgeInstallStatus> {
+  const paths = getCodexGlobalPaths();
+  const content = await fs.readFile(paths.configPath, "utf8").catch(() => null);
+  const installed = content ? codexTableRegex().test(content) : false;
+  const details = installed
+    ? [`MCP config present at ${paths.configPath}.`]
+    : ["No Ori-managed Codex MCP config detected."];
+
+  return {
+    installed,
+    client: "codex",
+    scope: "global",
+    configPaths: [paths.configPath],
+    configPath: paths.configPath,
+    activation: installed ? "unknown" : null,
+    resolvedVault: extractVaultFromCodexConfig(content),
+    details,
+  };
+}
+
 export async function runBridgeStatus(startDir: string) {
-  const [claudeProject, claudeGlobal, cursorProject, cursorGlobal] = await Promise.all([
+  const [claudeProject, claudeGlobal, cursorProject, cursorGlobal, codexGlobal] = await Promise.all([
     inspectClaudeInstall(startDir, "project"),
     inspectClaudeInstall(startDir, "global"),
     inspectCursorInstall(startDir, "project"),
     inspectCursorInstall(startDir, "global"),
+    inspectCodexInstall(),
   ]);
 
   return {
@@ -460,11 +558,13 @@ export async function runBridgeStatus(startDir: string) {
           global: cursorGlobal,
           active: cursorProject.installed ? cursorProject : cursorGlobal.installed ? cursorGlobal : null,
         },
+        codex: codexGlobal,
       },
       precedence: "project-over-global",
       instructions: [
         "Project installs override global installs when both exist for the same client.",
         "Cursor activation is reported as unknown because the adapter currently stores MCP wiring only, not startup behavior.",
+        "Codex stores MCP servers in ~/.codex/config.toml only.",
       ],
     },
     warnings: [],
@@ -570,6 +670,36 @@ export async function runBridgeCursor(startDir: string, request: Omit<BridgeRequ
       operation: request.uninstall ? "uninstall" : "install",
       mutation: mcpMutation,
       mcpPath: paths.mcpPath,
+    },
+    warnings,
+  };
+}
+
+export async function runBridgeCodex(startDir: string, request: Omit<BridgeRequest, "target" | "startDir"> = {}) {
+  const plan = await resolveBridgePlan({ ...request, target: "codex", startDir });
+  const paths = getCodexGlobalPaths();
+  const configMutation = await mergeIntoCodexConfigFile(paths.configPath, plan, request.uninstall === true);
+
+  const warnings = [...plan.warnings];
+  const instructions = [...plan.instructions];
+  instructions.push(
+    request.uninstall
+      ? `Removed Ori MCP config from ${paths.configPath}.`
+      : `Codex MCP config written to ${paths.configPath}.`,
+  );
+
+  return {
+    success: true,
+    data: {
+      ...buildGenericInstallOutput({
+        ...plan,
+        instructions,
+        warnings,
+      }),
+      client: "codex",
+      operation: request.uninstall ? "uninstall" : "install",
+      mutation: configMutation,
+      configPath: paths.configPath,
     },
     warnings,
   };

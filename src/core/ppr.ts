@@ -111,7 +111,7 @@ export function personalizedPageRankCombined(
     ppr = next;
   }
 
-  // Return sorted results — FIX: include seeds (let RRF deduplicate)
+  // Return sorted results — includes seeds (RRF handles deduplication)
   return [...ppr.entries()]
     .map(([noteId, score]) => ({ noteId, score }))
     .sort((a, b) => b.score - a.score)

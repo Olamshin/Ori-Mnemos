@@ -35,6 +35,7 @@ import {
   type RecursiveExploreOutput,
 } from "../core/explore.js";
 import { createProvider, NullProvider } from "../core/llm.js";
+import { getDecayedQ } from "../core/qvalue.js";
 import type { LlmProvider } from "../core/llm.js";
 
 /* ------------------------------------------------------------------ */
@@ -233,7 +234,7 @@ export async function runExplore(
   flatResults = flatResults.slice(0, resultLimit);
 
   // 12. Q-value lookup (real values if DB available)
-  const qValueLookup = (_title: string) => 0.5; // TODO: wire phaseB when DB is available
+  const qValueLookup = (title: string) => getDecayedQ(mainDb, title);
 
   // 13. Determine recursive mode
   const useRecursive = (options.recursive !== false) && exploreConfig.recursive_enabled;

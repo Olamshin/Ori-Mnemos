@@ -60,6 +60,7 @@ Connect to your client:
 ```bash
 ori bridge claude-code --scope global --activation auto --vault ~/brain
 ori bridge cursor --scope project --activation manual --vault ~/brain
+ori bridge codex --scope global --activation manual --vault ~/brain
 ori bridge generic --scope global --vault ~/brain     # any MCP client
 ```
 
@@ -301,6 +302,7 @@ ori graph communities             # Louvain clustering
 ori serve --mcp [--vault <path>]                                # Run MCP server
 ori bridge claude-code --scope <project|global>                 # Install Claude adapter
 ori bridge cursor --scope <project|global>                      # Install Cursor MCP config
+ori bridge codex --scope <project|global>                       # Install Codex MCP config in ~/.codex/config.toml
 ori bridge claude-code --activation <auto|manual> [--vault <p>] # Control startup behavior
 ori bridge generic --scope <project|global> [--json]            # Print generic MCP install plan
 ori bridge status [--json]                                      # Inspect project/global bridge installs
@@ -365,7 +367,7 @@ Bridge lifecycle:
 - use `--uninstall` to remove Ori-owned config from supported adapters
 - generic installs emit manual uninstall instructions because Ori does not own that client config surface
 
-Claude Code is the first fully automated adapter. Cursor now has native MCP config install support. Other MCP-capable clients can use `ori bridge generic` now and wire the emitted config into their own client surface.
+Claude Code is the first fully automated adapter. Cursor and Codex now have native MCP config install support. Codex writes to `~/.codex/config.toml` and uses a single global config surface; "project" scope there means project-like runtime vault discovery, not a separate project config file. Other MCP-capable clients can use `ori bridge generic` now and wire the emitted config into their own client surface.
 
 ---
 

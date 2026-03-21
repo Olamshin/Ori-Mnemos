@@ -46,6 +46,8 @@ export type PromoteResult = {
 
 const AUTO_APPLY_THRESHOLD = 0.8;
 
+const FOOTER_HEADINGS = ["Relevant Notes", "Areas"] as const;
+
 const TEMPLATE_PLACEHOLDER = /\{Content\s*[-—]/;
 
 /**
@@ -76,7 +78,7 @@ function parseFooter(body: string, heading: string): string[] {
     const remaining = body.slice(startIdx);
     const lines = remaining.split("\n");
 
-    const knownHeadings = ["Relevant Notes", "Areas"];
+    const knownHeadings = FOOTER_HEADINGS;
     for (const line of lines) {
       const trimmed = line.trim();
       if (trimmed.startsWith("- ")) {
@@ -109,7 +111,7 @@ function escapeRegex(s: string): string {
  * Line-based approach for reliability.
  */
 function stripFooters(body: string): string {
-  const headings = ["Relevant Notes", "Areas"];
+  const headings = FOOTER_HEADINGS;
   const lines = body.split("\n");
   const kept: string[] = [];
   let inFooterSection = false;

@@ -140,9 +140,6 @@ export function applyHubDampening(
 const RESOLUTION_TYPES = new Set([
   "decision",
   "learning",
-  "procedural",
-  "fix",
-  "solution",
 ]);
 
 /**
