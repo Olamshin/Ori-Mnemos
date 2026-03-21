@@ -160,14 +160,23 @@ export function suggestLinks(
     }
   }
 
-  // Project overlap
+  // Project overlap (skip when a project has too many notes to be a useful signal)
   if (noteProject.length > 0) {
+    const projectSizes = new Map<string, number>();
+    for (const [, fm] of vaultIndex.frontmatter) {
+      const projects = Array.isArray(fm.project) ? (fm.project as string[]) : [];
+      for (const p of projects)
+        projectSizes.set(p, (projectSizes.get(p) ?? 0) + 1);
+    }
+
     for (const [title, fm] of vaultIndex.frontmatter) {
       if (suggestions.has(title)) continue;
       const otherProject = Array.isArray(fm.project)
         ? (fm.project as string[])
         : [];
-      const overlap = noteProject.filter((p) => otherProject.includes(p));
+      const overlap = noteProject.filter(
+        (p) => otherProject.includes(p) && (projectSizes.get(p) ?? 0) <= 10,
+      );
       if (overlap.length > 0) {
         suggestions.set(title, {
           title,
@@ -227,9 +236,9 @@ export function suggestLinks(
     }
   }
 
-  return Array.from(suggestions.values()).sort(
-    (a, b) => b.confidence - a.confidence
-  );
+  return Array.from(suggestions.values())
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, 5);
 }
 
 /**
