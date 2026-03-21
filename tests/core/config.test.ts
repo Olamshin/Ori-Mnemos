@@ -122,6 +122,37 @@ describe("loadConfig", () => {
   });
 });
 
+describe("api_key_cmd config", () => {
+  it("defaults api_key_cmd to null", () => {
+    const config = applyConfigDefaults({});
+    expect(config.llm.api_key_cmd).toBeNull();
+  });
+
+  it("preserves api_key_cmd when provided", () => {
+    const config = applyConfigDefaults({
+      llm: {
+        provider: "anthropic",
+        model: "claude-sonnet-4-20250514",
+        api_key_env: null,
+        api_key_cmd: "pass anthropic/api-key",
+        base_url: null,
+      },
+    });
+    expect(config.llm.api_key_cmd).toBe("pass anthropic/api-key");
+  });
+
+  it("loads api_key_cmd from YAML config", async () => {
+    const configPath = path.join(tmpDir, "ori.config.yaml");
+    await fs.writeFile(
+      configPath,
+      "llm:\n  provider: anthropic\n  model: claude-sonnet-4-20250514\n  api_key_cmd: \"pass anthropic/api-key\"\n",
+      "utf8"
+    );
+    const config = await loadConfig(configPath);
+    expect(config.llm.api_key_cmd).toBe("pass anthropic/api-key");
+  });
+});
+
 describe("resolveTemplatePath", () => {
   const config = applyConfigDefaults({
     templates: {

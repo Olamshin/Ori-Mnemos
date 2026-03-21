@@ -1,3 +1,5 @@
+import { execSync } from "node:child_process";
+
 /* ------------------------------------------------------------------ */
 /*  Chat interface (generic LLM calls for explore recursion)           */
 /* ------------------------------------------------------------------ */
@@ -35,6 +37,7 @@ export type LlmConfig = {
   provider: string | null;
   model: string | null;
   api_key_env: string | null;
+  api_key_cmd: string | null;
   base_url: string | null;
 };
 
@@ -42,6 +45,7 @@ export const DEFAULT_LLM_CONFIG: LlmConfig = {
   provider: null,
   model: null,
   api_key_env: null,
+  api_key_cmd: null,
   base_url: null,
 };
 
@@ -71,6 +75,29 @@ export class NullProvider implements LlmProvider {
   }
 }
 
+function resolveApiKey(config: LlmConfig): string | undefined {
+  if (config.api_key_cmd) {
+    try {
+      const key = execSync(config.api_key_cmd, {
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+      if (key) {
+        return key;
+      }
+    } catch (err) {
+      console.error(`api_key_cmd failed: ${(err as Error).message}`);
+    }
+  }
+
+  if (config.api_key_env) {
+    return process.env[config.api_key_env];
+  }
+
+  return undefined;
+}
+
 /**
  * Create provider from config. Returns NullProvider when provider is null.
  */
@@ -79,9 +106,7 @@ export async function createProvider(config: LlmConfig): Promise<LlmProvider> {
     return new NullProvider();
   }
 
-  const apiKey = config.api_key_env
-    ? process.env[config.api_key_env]
-    : undefined;
+  const apiKey = resolveApiKey(config);
 
   if (!apiKey) {
     return new NullProvider();

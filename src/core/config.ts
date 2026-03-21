@@ -306,6 +306,7 @@ export function applyConfigDefaults(raw: Partial<OriConfig>): OriConfig {
       provider: rawLlm?.provider ?? DEFAULT_LLM_CONFIG.provider,
       model: rawLlm?.model ?? DEFAULT_LLM_CONFIG.model,
       api_key_env: rawLlm?.api_key_env ?? DEFAULT_LLM_CONFIG.api_key_env,
+      api_key_cmd: rawLlm?.api_key_cmd ?? DEFAULT_LLM_CONFIG.api_key_cmd,
       base_url: (rawLlm as Record<string, unknown> | undefined)?.base_url as string | null ?? DEFAULT_LLM_CONFIG.base_url,
     },
     promote: {
