@@ -1,18 +1,49 @@
 # Ori Mnemos
 
-**Open-source cognitive architecture for persistent AI agent memory.**
+**Open-source persistent memory infrastructure for AI agents.**
 
-Language models are stateless at every inference call. Without external memory, an agent cannot learn from past sessions, cannot associate across domains, and cannot improve over time. It enters every session with amnesia. The context window is a queue, not a graph — old information falls off the back as new information enters the front. Even persisted on a VPS, an agent has a heartbeat but no hippocampus.
+Ori implements human cognition as mathematical models on a knowledge graph. Activation decay from ACT-R. Spreading activation along wiki-link edges. Hebbian co-occurrence from retrieval patterns. Reinforcement learning on retrieval itself. Recursive graph traversal with sub-question decomposition. The system learns what matters, forgets what doesn't, and optimizes its own retrieval pipeline — every session makes it sharper.
 
-Model intelligence is no longer the bottleneck. The bottleneck is **memory** — structured, persistent, and efficient enough to scale from 50 notes to 5,000 without degrading retrieval quality or inflating token cost.
+Persistent memory across sessions, clients, and machines. Retrieval that [smashes incumbents on benchmarks](#benchmarks). Markdown on disk. Wiki-links as graph edges. Git as version control. No database lock-in, no cloud dependency, no vendor capture.
 
-Ori implements tenets of human cognition as mathematical models on a knowledge graph. Activation decay from ACT-R. Spreading activation along wiki-link edges. Hebbian co-occurrence from retrieval patterns. Reinforcement learning on retrieval itself. Ebbinghaus forgetting with spaced-repetition strength curves. The system learns what matters, forgets what doesn't, and optimizes its own retrieval pipeline — every session makes it sharper.
+**v0.5.0** · [npm](https://www.npmjs.com/package/ori-memory) · [Paper](https://orimnemos.com/rmh) · Apache-2.0
 
-The result: an agent with continuous identity across sessions, clients, and machines. Accumulated understanding that persists, connects, and compounds. The model is the engine. The vault becomes the mind.
+---
 
-Markdown on disk. Wiki-links as graph edges. Git as version control. No database lock-in, no cloud dependency, no vendor capture.
+## Benchmarks
 
-**v0.4.0** · [npm](https://www.npmjs.com/package/ori-memory) · Apache-2.0
+### HotpotQA — Multi-Hop Retrieval
+
+Head-to-head against [Mem0](https://github.com/mem0ai/mem0), the most widely adopted agent memory system. HotpotQA tests multi-hop reasoning — questions that require connecting information across multiple documents to answer.
+
+| Metric | Ori Mnemos | Mem0 | Δ |
+|--------|:----------:|:----:|:-:|
+| Recall@5 | **90%** | 29% | **3.1×** |
+| F1 Score | **0.68** | 0.33 | **2.1×** |
+| Latency (avg) | **120ms** | 1,140ms | **9.5× faster** |
+| Infrastructure | Markdown + SQLite | Redis + Qdrant + cloud | — |
+
+Ori retrieves the right information 3× more often, scores 2× higher on answer quality, and does it 9.5× faster — on markdown files with a SQLite index. No cloud services. No API keys. Full evaluation code in [`bench/`](./bench/).
+
+### LoCoMo — Long-Term Conversational Memory
+
+Evaluated on [LoCoMo](https://github.com/snap-research/locomo) (Maharana et al., 2024) — the standard benchmark for long-term conversational memory. 10 conversations, 695 questions across single-hop, multi-hop, and temporal reasoning.
+
+| System | Single-hop | Multi-hop | Infrastructure |
+|--------|:----------:|:---------:|----------------|
+| MemoryBank | 5.00 | — | Custom server |
+| ReadAgent | 9.15 | — | LLM-based |
+| A-Mem | 20.76 | — | Cloud APIs |
+| MemGPT / Letta | 26.65 | — | PostgreSQL + cloud |
+| LangMem | 35.51 | 26.04 | Cloud APIs |
+| OpenAI Memory | 34.30 | — | OpenAI proprietary |
+| Zep | 35.74 | 19.37 | PostgreSQL + cloud |
+| **Mem0** | **38.72** | **28.64** | Redis + Qdrant + cloud |
+| **Ori Mnemos** | **37.69** | **29.31** | **Markdown on disk** |
+
+Baseline numbers from [Mem0 paper](https://arxiv.org/abs/2504.19413) (Table 1). Ori evaluated with GPT-4.1-mini for answer generation, BM25 + embedding + PageRank fusion for retrieval.
+
+More benchmarks coming — including [LoCoMo-Plus](https://github.com/snap-research/locomo) (Level-2 cognitive memory) and adversarial refusal evaluation.
 
 ---
 
@@ -47,6 +78,26 @@ Manual MCP config:
 ```
 
 Start a session. The agent receives its identity automatically and begins onboarding on first run.
+
+---
+
+## Recursive Memory Harness
+
+Ori is the first implementation of the **Recursive Memory Harness** (RMH) framework — a set of constraints on how persistent memory should behave for AI agents.
+
+The core insight comes from Recursive Language Models ([Zhang, Krassa & Khattab, 2026](https://arxiv.org/abs/2512.24601)). RLM treats context not as input to be stuffed into a window, but as an environment to be navigated. The model doesn't get a bigger desk — it gets legs and walks into the library. RMH applies the same principle to persistent memory.
+
+Three constraints define the framework:
+
+1. **Retrieval must follow the graph.** Memory is not a flat vector store. Notes are nodes, wiki-links are edges. Retrieval walks the structure — Personalized PageRank at α=0.45, spreading activation along edges, community-aware traversal. The topology of the graph shapes what gets found.
+
+2. **Unresolved queries must recurse.** When a single retrieval pass is insufficient, the system decomposes the question into sub-questions, retrieves against each, and synthesizes. Convergence detection stops recursion when new passes stop surfacing new information. This is what `ori explore` does.
+
+3. **Every retrieval must reshape the graph.** Retrieval is not read-only. Co-occurrence edges grow between notes retrieved together (Hebbian learning). Q-values update based on whether retrieved notes were actually useful. The graph learns from how it is used — every query makes the next query better.
+
+Most memory systems treat retrieval as search. RMH treats retrieval as navigation, recursion, and learning — on a graph that evolves with every session.
+
+Read the full paper: [Introducing Recursive Memory Harness](https://orimnemos.com/rmh)
 
 ---
 
@@ -121,7 +172,8 @@ All updates happen in a single SQLite transaction at session end, in order: co-o
 ## The Stack
 
 ```
-Layer 5: MCP Server                    15 tools, 5 resources — any agent talks to this
+Layer 6: MCP Server                    16 tools, 5 resources — any agent talks to this
+Layer 5: Recursive Exploration         PPR graph traversal, sub-question decomposition, convergence detection
 Layer 4: Retrieval Intelligence        Q-value reranking, co-occurrence learning, stage meta-optimization
 Layer 3: Dampening Pipeline            gravity, hub, resolution — ablation-validated
 Layer 2: Four-Signal Fusion            semantic + BM25 + PageRank + warmth → score-weighted RRF
@@ -129,7 +181,7 @@ Layer 1: Knowledge Graph + Vitality    wiki-links, ACT-R decay, spreading activa
 Layer 0: Markdown files on disk        git-friendly, human-readable, portable
 ```
 
-15 MCP tools · 5 resources · 16 CLI commands · 579 tests
+16 MCP tools · 5 resources · 17 CLI commands · 579 tests
 
 ---
 
@@ -148,34 +200,12 @@ A typical session costs **~$0.10** with Ori. Without it: **~$6.00+**.
 
 ---
 
-## Benchmarks
-
-Evaluated on [LoCoMo](https://github.com/snap-research/locomo) (Maharana et al., 2024) — the standard benchmark for long-term conversational memory. 10 conversations, 695 questions across single-hop, multi-hop, and temporal reasoning. Answer F1 via token overlap, same metric and methodology as Mem0's published evaluation.
-
-| System | Single-hop | Multi-hop | Infrastructure |
-|--------|:----------:|:---------:|----------------|
-| MemoryBank | 5.00 | — | Custom server |
-| ReadAgent | 9.15 | — | LLM-based |
-| A-Mem | 20.76 | — | Cloud APIs |
-| MemGPT / Letta | 26.65 | — | PostgreSQL + cloud |
-| LangMem | 35.51 | 26.04 | Cloud APIs |
-| OpenAI Memory | 34.30 | — | OpenAI proprietary |
-| Zep | 35.74 | 19.37 | PostgreSQL + cloud |
-| **Mem0** | **38.72** | **28.64** | Redis + Qdrant + cloud |
-| **Ori Mnemos** | **37.69** | **29.31** | **Markdown on disk** |
-
-Ori matches Mem0 on single-hop retrieval and exceeds it on multi-hop reasoning — with zero cloud services, zero databases, and zero API keys required for core retrieval. The entire pipeline runs locally on markdown files with a SQLite embedding index.
-
-Baseline numbers from [Mem0 paper](https://arxiv.org/abs/2504.19413) (Table 1). Ori evaluated with GPT-4.1-mini for answer generation, BM25 + embedding + PageRank fusion for retrieval. Full evaluation code and results in [`bench/`](./bench/).
-
----
-
 ## Architecture
 
 ```
                           Any MCP Client
                     (Claude, Cursor, Windsurf,
-                     Cline, custom agents, VPS)
+                     Cline, Hermes, custom agents, VPS)
                               │
                         MCP Protocol
                         (stdio / JSON-RPC)
@@ -185,7 +215,7 @@ Baseline numbers from [Mem0 paper](https://arxiv.org/abs/2504.19413) (Table 1). 
                     │                   │
                     │  instructions     │   identity auto-injected
                     │  resources  (5)   │   ori:// endpoints
-                    │  tools    (15)    │   full memory operations
+                    │  tools    (16)    │   full memory operations
                     └─────────┬─────────┘
                               │
             ┌─────────────────┼─────────────────┐
@@ -208,7 +238,8 @@ Baseline numbers from [Mem0 paper](https://arxiv.org/abs/2504.19413) (Table 1). 
    PageRank    Semantic          │  Co-occur  (edges)   │
    Spreading   BM25              │  Stage Q   (LinUCB)  │
    Activation  4-Signal          │  Dampening (3 stages)│
-   Communities Fusion            └──────────────────────┘
+   Communities Fusion            │  Explore   (PPR+RMH) │
+                                 └──────────────────────┘
 ```
 
 ---
@@ -230,6 +261,7 @@ Baseline numbers from [Mem0 paper](https://arxiv.org/abs/2504.19413) (Table 1). 
 | `ori_query_similar` | Semantic search (vector only, faster) |
 | `ori_query_important` | PageRank authority ranking |
 | `ori_query_fading` | Vitality-based decay detection |
+| `ori_explore` | Recursive graph traversal — PPR, sub-question decomposition, convergence detection |
 | `ori_prune` | Activation topology analysis and archive candidates |
 | `ori_index_build` | Build/update embedding index and bootstrap co-occurrence edges |
 
@@ -251,6 +283,7 @@ ori archive [--dry-run]           # Archive stale notes
 ori prune [--apply] [--verbose]   # Topology analysis + archive candidates
 
 # Retrieval
+ori explore <query>               # Recursive graph traversal (RMH)
 ori query ranked <query>          # Full intelligent retrieval
 ori query similar <query>         # Semantic search
 ori query important               # PageRank ranking
@@ -376,7 +409,7 @@ ori --version
 ```
 
 ```bash
-npm test              # 579 tests
+npm test              # 579+ tests
 npm run lint          # Type check
 npm run dev           # Watch mode
 ```
