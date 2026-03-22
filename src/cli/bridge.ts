@@ -1,6 +1,7 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { fileURLToPath } from "node:url";
+import yaml from "yaml";
 import {
   buildGenericInstallOutput,
   getClaudeGlobalPaths,
@@ -8,6 +9,8 @@ import {
   getCodexGlobalPaths,
   getCursorGlobalPaths,
   getCursorProjectPaths,
+  getHermesGlobalPaths,
+  getHermesProjectPaths,
   resolveBridgePlan,
   type BridgeActivation,
   type BridgePlan,
@@ -157,13 +160,14 @@ type BridgeMutationKind = "installed" | "updated" | "uninstalled" | "noop";
 type BridgeInstallStatus = {
   installed: boolean;
   scope: "project" | "global";
-  client: "claude-code" | "cursor" | "codex";
+  client: "claude-code" | "cursor" | "codex" | "hermes";
   configPaths: string[];
   mcpPath?: string;
   configPath?: string;
   settingsPath?: string;
   instructionsPath?: string;
   hooksDir?: string;
+  pluginDir?: string;
   activation: BridgeActivation | "unknown" | null;
   resolvedVault: string | null;
   details: string[];
@@ -536,12 +540,13 @@ async function inspectCodexInstall(): Promise<BridgeInstallStatus> {
 }
 
 export async function runBridgeStatus(startDir: string) {
-  const [claudeProject, claudeGlobal, cursorProject, cursorGlobal, codexGlobal] = await Promise.all([
+  const [claudeProject, claudeGlobal, cursorProject, cursorGlobal, codexGlobal, hermesGlobal] = await Promise.all([
     inspectClaudeInstall(startDir, "project"),
     inspectClaudeInstall(startDir, "global"),
     inspectCursorInstall(startDir, "project"),
     inspectCursorInstall(startDir, "global"),
     inspectCodexInstall(),
+    inspectHermesInstall(),
   ]);
 
   return {
@@ -559,12 +564,14 @@ export async function runBridgeStatus(startDir: string) {
           active: cursorProject.installed ? cursorProject : cursorGlobal.installed ? cursorGlobal : null,
         },
         codex: codexGlobal,
+        hermes: hermesGlobal,
       },
       precedence: "project-over-global",
       instructions: [
         "Project installs override global installs when both exist for the same client.",
         "Cursor activation is reported as unknown because the adapter currently stores MCP wiring only, not startup behavior.",
         "Codex stores MCP servers in ~/.codex/config.toml only.",
+        "Hermes stores MCP servers in ~/.hermes/config.yaml. Auto activation installs a native plugin at ~/.hermes/plugins/ori/.",
       ],
     },
     warnings: [],
@@ -700,6 +707,293 @@ export async function runBridgeCodex(startDir: string, request: Omit<BridgeReque
       operation: request.uninstall ? "uninstall" : "install",
       mutation: configMutation,
       configPath: paths.configPath,
+    },
+    warnings,
+  };
+}
+
+// ── Hermes adapter ──────────────────────────────────────────────────────────
+
+const HERMES_BRIDGE_SENTINEL = "<!-- ori-bridge:hermes -->";
+const HERMES_PLUGIN_MARKER = "plugin.yaml";
+
+type HermesConfig = {
+  mcp_servers?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+function hermesSnippet(activation: BridgeActivation): string {
+  const orientLine =
+    activation === "auto"
+      ? "- Ori plugin auto-orients at session start"
+      : "- Manual activation is enabled; call `ori_orient` when you want session context loaded";
+  const persistLine =
+    activation === "auto"
+      ? "- Session capture runs automatically at session end via plugin"
+      : "- Automatic session capture is disabled in manual mode";
+
+  return `# Ori Mnemos - Hermes Agent Bridge
+
+## Session Rhythm
+Every session: Orient -> Work -> Persist
+
+### Orient (always first)
+- ${orientLine}
+- The Ori MCP server provides tools: \`ori_orient\`, \`ori_query_ranked\`, \`ori_add\`, \`ori_validate\`, and more
+- Call \`ori_orient\` for session briefing (daily + goals + reminders + vault status)
+
+### Work
+- Use \`ori_query_ranked\` to find related notes before creating new ones
+- Use \`ori_add\` to capture insights to inbox/
+- NEVER write to notes/ directly — use \`ori_add\` then \`ori_promote\`
+
+### Persist
+- Use \`ori_update\` file=daily to mark completed items
+- Use \`ori_update\` file=goals to update active threads
+- Run \`ori_validate\` on notes you create
+- ${persistLine}
+- Keep notes atomic and link to maps
+`;
+}
+
+export function mergeHermesConfig(existing: HermesConfig, plan: BridgePlan): HermesConfig {
+  const next: HermesConfig = { ...existing };
+  if (!next.mcp_servers || typeof next.mcp_servers !== "object") {
+    next.mcp_servers = {};
+  } else {
+    next.mcp_servers = { ...next.mcp_servers };
+  }
+
+  const entry: Record<string, unknown> = {
+    command: plan.server.command,
+    args: plan.server.args,
+  };
+  if (Object.keys(plan.server.env).length > 0) {
+    entry.env = plan.server.env;
+  }
+  next.mcp_servers[ORI_MCP_SENTINEL] = entry;
+  return next;
+}
+
+export function removeOriFromHermesConfig(existing: HermesConfig): HermesConfig {
+  const next: HermesConfig = { ...existing };
+  if (next.mcp_servers && typeof next.mcp_servers === "object") {
+    next.mcp_servers = { ...next.mcp_servers };
+    delete next.mcp_servers[ORI_MCP_SENTINEL];
+    if (Object.keys(next.mcp_servers).length === 0) {
+      delete next.mcp_servers;
+    }
+  }
+  return next;
+}
+
+function classifyHermesConfigMutation(existing: HermesConfig, next: HermesConfig, uninstall = false): BridgeMutationKind {
+  const hadOri = Boolean(existing.mcp_servers && ORI_MCP_SENTINEL in existing.mcp_servers);
+  const hasOri = Boolean(next.mcp_servers && ORI_MCP_SENTINEL in next.mcp_servers);
+  if (uninstall) return hadOri ? "uninstalled" : "noop";
+  if (!hadOri && hasOri) return "installed";
+  if (hadOri && hasOri) return "updated";
+  return "noop";
+}
+
+async function mergeIntoHermesConfigFile(configPath: string, plan: BridgePlan, uninstall = false): Promise<BridgeMutationKind> {
+  let existing: HermesConfig = {};
+  try {
+    const raw = await fs.readFile(configPath, "utf8");
+    const parsed = yaml.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      existing = parsed as HermesConfig;
+    }
+  } catch {
+    // file missing or unparseable
+  }
+
+  const merged = uninstall ? removeOriFromHermesConfig(existing) : mergeHermesConfig(existing, plan);
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  await fs.writeFile(configPath, yaml.stringify(merged, { lineWidth: 120 }), "utf8");
+  return classifyHermesConfigMutation(existing, merged, uninstall);
+}
+
+function extractVaultFromHermesConfig(config: HermesConfig | null): string | null {
+  const entry = config?.mcp_servers?.[ORI_MCP_SENTINEL];
+  if (!entry || typeof entry !== "object") return null;
+  const record = entry as Record<string, unknown>;
+  const env = record.env;
+  if (env && typeof env === "object") {
+    const value = (env as Record<string, unknown>).ORI_VAULT;
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  const args = record.args;
+  if (Array.isArray(args)) {
+    const vaultIndex = args.findIndex((value) => value === "--vault");
+    if (vaultIndex >= 0 && typeof args[vaultIndex + 1] === "string") {
+      return args[vaultIndex + 1] as string;
+    }
+  }
+  return null;
+}
+
+function getHermesAdaptersDir(): string {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  return path.resolve(__dirname, "..", "..", "adapters", "hermes");
+}
+
+async function copyHermesPlugin(adaptersDir: string, pluginDir: string): Promise<void> {
+  await fs.mkdir(pluginDir, { recursive: true });
+  for (const file of ["plugin.yaml", "__init__.py", "hooks.py"]) {
+    await fs.copyFile(
+      path.join(adaptersDir, "plugin", file),
+      path.join(pluginDir, file),
+    );
+  }
+}
+
+async function removeHermesPlugin(pluginDir: string): Promise<BridgeMutationKind> {
+  try {
+    const stat = await fs.stat(path.join(pluginDir, HERMES_PLUGIN_MARKER));
+    if (stat.isFile()) {
+      await fs.rm(pluginDir, { recursive: true, force: true });
+      return "uninstalled";
+    }
+  } catch {
+    // plugin dir doesn't exist
+  }
+  return "noop";
+}
+
+async function appendHermesInstructions(instructionsPath: string, activation: BridgeActivation): Promise<BridgeMutationKind> {
+  let existing = "";
+  try {
+    existing = await fs.readFile(instructionsPath, "utf8");
+  } catch {
+    // file doesn't exist yet
+  }
+  if (existing.includes(HERMES_BRIDGE_SENTINEL)) {
+    return "noop";
+  }
+  await fs.appendFile(instructionsPath, `\n\n${HERMES_BRIDGE_SENTINEL}\n${hermesSnippet(activation)}`);
+  return existing.length > 0 ? "updated" : "installed";
+}
+
+export function removeHermesInstructions(content: string): string {
+  const marker = `\n\n${HERMES_BRIDGE_SENTINEL}\n`;
+  const idx = content.indexOf(marker);
+  if (idx >= 0) return content.slice(0, idx);
+  return content;
+}
+
+async function uninstallHermesInstructions(instructionsPath: string): Promise<BridgeMutationKind> {
+  try {
+    const existing = await fs.readFile(instructionsPath, "utf8");
+    const next = removeHermesInstructions(existing);
+    await fs.writeFile(instructionsPath, next, "utf8");
+    return next === existing ? "noop" : "uninstalled";
+  } catch {
+    return "noop";
+  }
+}
+
+async function inspectHermesInstall(): Promise<BridgeInstallStatus> {
+  const paths = getHermesGlobalPaths();
+  let config: HermesConfig | null = null;
+  try {
+    const raw = await fs.readFile(paths.configPath, "utf8");
+    const parsed = yaml.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      config = parsed as HermesConfig;
+    }
+  } catch {
+    // missing
+  }
+
+  const hasMcp = Boolean(config?.mcp_servers?.[ORI_MCP_SENTINEL]);
+  let hasPlugin = false;
+  try {
+    const stat = await fs.stat(path.join(paths.pluginDir, HERMES_PLUGIN_MARKER));
+    hasPlugin = stat.isFile();
+  } catch {
+    // no plugin
+  }
+
+  const installed = hasMcp || hasPlugin;
+  const details: string[] = [];
+  if (hasMcp) details.push(`MCP config present at ${paths.configPath}.`);
+  if (hasPlugin) details.push(`Ori plugin installed at ${paths.pluginDir}.`);
+  if (!installed) details.push("No Ori-managed Hermes bridge config detected.");
+
+  return {
+    installed,
+    client: "hermes",
+    scope: "global",
+    configPaths: [paths.configPath],
+    configPath: paths.configPath,
+    pluginDir: paths.pluginDir,
+    activation: hasPlugin ? "auto" : hasMcp ? "manual" : null,
+    resolvedVault: extractVaultFromHermesConfig(config),
+    details,
+  };
+}
+
+export async function runBridgeHermes(startDir: string, request: Omit<BridgeRequest, "target" | "startDir"> = {}) {
+  const plan = await resolveBridgePlan({ ...request, target: "hermes", startDir });
+  const globalPaths = getHermesGlobalPaths();
+  const projectPaths = getHermesProjectPaths(startDir);
+  const adaptersDir = getHermesAdaptersDir();
+
+  let configMutation: BridgeMutationKind = "noop";
+  let pluginMutation: BridgeMutationKind = "noop";
+  let instructionsMutation: BridgeMutationKind = "noop";
+
+  if (request.uninstall) {
+    configMutation = await mergeIntoHermesConfigFile(globalPaths.configPath, plan, true);
+    pluginMutation = await removeHermesPlugin(globalPaths.pluginDir);
+    if (plan.scope === "project") {
+      instructionsMutation = await uninstallHermesInstructions(projectPaths.instructionsPath);
+    }
+  } else {
+    configMutation = await mergeIntoHermesConfigFile(globalPaths.configPath, plan);
+
+    if (plan.activation === "auto") {
+      await copyHermesPlugin(adaptersDir, globalPaths.pluginDir);
+      pluginMutation = "installed";
+    }
+
+    if (plan.scope === "project") {
+      instructionsMutation = await appendHermesInstructions(projectPaths.instructionsPath, plan.activation);
+    }
+  }
+
+  const mutation = summarizeMutations([configMutation, pluginMutation, instructionsMutation]);
+  const warnings = [...plan.warnings];
+  const instructions = [...plan.instructions];
+
+  instructions.push(
+    request.uninstall
+      ? `Removed Ori config from ${globalPaths.configPath}.`
+      : `Hermes MCP config written to ${globalPaths.configPath}.`,
+  );
+  if (!request.uninstall && plan.activation === "auto") {
+    instructions.push(`Ori lifecycle plugin installed at ${globalPaths.pluginDir}.`);
+  }
+  if (!request.uninstall && plan.scope === "project") {
+    instructions.push(`Bridge instructions appended to ${projectPaths.instructionsPath}.`);
+  }
+
+  return {
+    success: true,
+    data: {
+      ...buildGenericInstallOutput({
+        ...plan,
+        instructions,
+        warnings,
+      }),
+      client: "hermes",
+      operation: request.uninstall ? "uninstall" : "install",
+      mutation,
+      configPath: globalPaths.configPath,
+      pluginDir: globalPaths.pluginDir,
+      instructionsPath: plan.scope === "project" ? projectPaths.instructionsPath : undefined,
     },
     warnings,
   };

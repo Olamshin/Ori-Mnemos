@@ -7,18 +7,23 @@ import {
   getCodexGlobalPaths,
   getCursorGlobalPaths,
   getCursorProjectPaths,
+  getHermesGlobalPaths,
   resolveBridgePlan,
   selectPreferredBridgePlan,
 } from "../src/core/bridge.js";
 import {
   mergeMcpConfig,
+  mergeHermesConfig,
   mergeSettings,
   removeClaudeInstructions,
+  removeHermesInstructions,
+  removeOriFromHermesConfig,
   removeOriFromMcpConfig,
   removeOriFromSettings,
   runBridgeClaudeCode,
   runBridgeCodex,
   runBridgeCursor,
+  runBridgeHermes,
   runBridgeStatus,
 } from "../src/cli/bridge.js";
 
@@ -514,5 +519,200 @@ describe("claude adapter", () => {
       uninstall: true,
     });
     expect((removed.data as { mutation: string }).mutation).toBe("uninstalled");
+  });
+});
+
+describe("hermes adapter", () => {
+  it("uses the expected global config and plugin paths", async () => {
+    await withTempHome(async (home) => {
+      const paths = getHermesGlobalPaths();
+      expect(paths.configPath).toBe(path.join(home, ".hermes", "config.yaml"));
+      expect(paths.pluginDir).toBe(path.join(home, ".hermes", "plugins", "ori"));
+    });
+  });
+
+  it("defaults to auto activation for hermes bridge plans", async () => {
+    const cwd = await makeTempDir();
+    const plan = await resolveBridgePlan({
+      target: "hermes",
+      startDir: cwd,
+      scope: "global",
+      vault: path.join(cwd, "brain"),
+    });
+    expect(plan.activation).toBe("auto");
+  });
+
+  it("merges Ori into Hermes YAML config without clobbering other servers", async () => {
+    const cwd = await makeTempDir();
+    const plan = await resolveBridgePlan({
+      target: "hermes",
+      startDir: cwd,
+      scope: "global",
+      vault: path.join(cwd, "brain"),
+    });
+
+    const merged = mergeHermesConfig(
+      {
+        mcp_servers: {
+          time: { command: "uvx", args: ["mcp-server-time"] },
+        },
+      },
+      plan,
+    );
+
+    expect(Object.keys(merged.mcp_servers ?? {}).sort()).toEqual(["ori", "time"]);
+    expect((merged.mcp_servers?.ori as { args: string[] }).args).toEqual([
+      "serve",
+      "--mcp",
+      "--vault",
+      path.join(cwd, "brain"),
+    ]);
+  });
+
+  it("removes only the Ori entry from Hermes config", () => {
+    const next = removeOriFromHermesConfig({
+      mcp_servers: {
+        ori: { command: "ori", args: ["serve", "--mcp"] },
+        time: { command: "uvx", args: ["mcp-server-time"] },
+      },
+    });
+    expect(next.mcp_servers).toEqual({
+      time: { command: "uvx", args: ["mcp-server-time"] },
+    });
+  });
+
+  it("removes the Hermes bridge instructions block", () => {
+    const content = [
+      "# Existing project context",
+      "",
+      "keep me",
+      "",
+      "<!-- ori-bridge:hermes -->",
+      "# Ori Mnemos - Hermes Agent Bridge",
+      "bridge body",
+    ].join("\n");
+    expect(removeHermesInstructions(content)).toBe("# Existing project context\n\nkeep me");
+  });
+
+  it("writes Hermes MCP config and installs plugin on auto activation", async () => {
+    await withTempHome(async (home) => {
+      const cwd = await makeTempDir();
+      const brain = path.join(cwd, "brain");
+
+      const result = await runBridgeHermes(cwd, {
+        scope: "global",
+        activation: "auto",
+        vault: brain,
+      });
+
+      expect(result.success).toBe(true);
+      const data = result.data as { mutation: string; configPath: string; pluginDir: string };
+      expect(data.mutation).toBe("installed");
+      expect(data.configPath).toBe(path.join(home, ".hermes", "config.yaml"));
+      expect(data.pluginDir).toBe(path.join(home, ".hermes", "plugins", "ori"));
+
+      // Verify YAML config
+      const yaml = await import("yaml");
+      const raw = await readFile(data.configPath, "utf8");
+      const config = yaml.parse(raw) as { mcp_servers?: { ori?: { command: string; args: string[]; env?: Record<string, string> } } };
+      expect(config.mcp_servers?.ori?.command).toBe("ori");
+      expect(config.mcp_servers?.ori?.args).toEqual(["serve", "--mcp", "--vault", brain]);
+      expect(config.mcp_servers?.ori?.env).toEqual({ ORI_VAULT: brain });
+
+      // Verify plugin was installed
+      const pluginYaml = await readFile(path.join(data.pluginDir, "plugin.yaml"), "utf8");
+      expect(pluginYaml).toContain("name: ori");
+      const initPy = await readFile(path.join(data.pluginDir, "__init__.py"), "utf8");
+      expect(initPy).toContain("def register(ctx)");
+    });
+  });
+
+  it("writes project-scope instructions to HERMES.md", async () => {
+    await withTempHome(async () => {
+      const cwd = await makeTempDir();
+      const brain = path.join(cwd, "brain");
+
+      const result = await runBridgeHermes(cwd, {
+        scope: "project",
+        activation: "manual",
+        vault: brain,
+      });
+
+      expect(result.success).toBe(true);
+      const data = result.data as { instructionsPath: string };
+      expect(data.instructionsPath).toBe(path.join(cwd, "HERMES.md"));
+
+      const content = await readFile(data.instructionsPath, "utf8");
+      expect(content).toContain("<!-- ori-bridge:hermes -->");
+      expect(content).toContain("Ori Mnemos - Hermes Agent Bridge");
+      expect(content).toContain("Manual activation");
+    });
+  });
+
+  it("updates then uninstalls Hermes bridge cleanly", async () => {
+    await withTempHome(async () => {
+      const cwd = await makeTempDir();
+      const brainA = path.join(cwd, "brain-a");
+      const brainB = path.join(cwd, "brain-b");
+
+      const installed = await runBridgeHermes(cwd, {
+        scope: "global",
+        activation: "auto",
+        vault: brainA,
+      });
+      expect((installed.data as { mutation: string }).mutation).toBe("installed");
+
+      const updated = await runBridgeHermes(cwd, {
+        scope: "global",
+        activation: "auto",
+        vault: brainB,
+      });
+      expect((updated.data as { mutation: string }).mutation).toBe("updated");
+
+      const removed = await runBridgeHermes(cwd, {
+        scope: "global",
+        uninstall: true,
+      });
+      expect((removed.data as { mutation: string }).mutation).toBe("uninstalled");
+
+      // Verify config cleaned up
+      const yaml = await import("yaml");
+      const configPath = (removed.data as { configPath: string }).configPath;
+      const raw = await readFile(configPath, "utf8");
+      const config = yaml.parse(raw) as { mcp_servers?: Record<string, unknown> };
+      expect(config.mcp_servers?.ori).toBeUndefined();
+    });
+  });
+
+  it("reports Hermes install in bridge status", async () => {
+    await withTempHome(async (home) => {
+      const cwd = await makeTempDir();
+      const brain = path.join(cwd, "brain");
+
+      await runBridgeHermes(cwd, {
+        scope: "global",
+        activation: "auto",
+        vault: brain,
+      });
+
+      const result = await runBridgeStatus(cwd);
+      const hermes = (result.data as {
+        clients: {
+          hermes: {
+            installed: boolean;
+            resolvedVault: string | null;
+            activation: string | null;
+            configPaths: string[];
+            pluginDir: string;
+          };
+        };
+      }).clients.hermes;
+
+      expect(hermes.installed).toBe(true);
+      expect(hermes.resolvedVault).toBe(brain);
+      expect(hermes.activation).toBe("auto");
+      expect(hermes.configPaths).toEqual([path.join(home, ".hermes", "config.yaml")]);
+      expect(hermes.pluginDir).toBe(path.join(home, ".hermes", "plugins", "ori"));
+    });
   });
 });

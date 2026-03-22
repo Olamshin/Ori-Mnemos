@@ -1,0 +1,5 @@
+name: ori
+version: "0.1.0"
+description: "Ori Mnemos — persistent agent memory with learning retrieval. Provides vault health at session start and session capture at end."
+author: "Ori Mnemos"
+homepage: "https://github.com/aayoawoyemi/Ori-Mnemos"

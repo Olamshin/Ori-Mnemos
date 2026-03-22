@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { getGlobalVaultPath, isVaultRoot } from "./vault.js";
 
-export type BridgeTarget = "claude-code" | "cursor" | "codex" | "generic";
+export type BridgeTarget = "claude-code" | "cursor" | "codex" | "hermes" | "generic";
 export type BridgeScope = "project" | "global";
 export type BridgeActivation = "auto" | "manual";
 export type VaultResolutionSource = "explicit" | "project" | "global-default" | "none";
@@ -47,7 +47,7 @@ export function resolveBridgeScope(request: Pick<BridgeRequest, "scope" | "globa
 
 export async function resolveBridgePlan(request: BridgeRequest): Promise<BridgePlan> {
   const scope = resolveBridgeScope(request);
-  const activation = request.activation ?? (request.target === "claude-code" ? "auto" : "manual");
+  const activation = request.activation ?? (request.target === "claude-code" || request.target === "hermes" ? "auto" : "manual");
 
   let resolvedVault: string | null = null;
   let resolvedVaultSource: VaultResolutionSource = "none";
@@ -88,6 +88,12 @@ export async function resolveBridgePlan(request: BridgeRequest): Promise<BridgeP
     );
     instructions.push(
       "Codex project installs write to ~/.codex/config.toml without pinning --vault unless you pass --vault explicitly.",
+    );
+  }
+
+  if (!request.uninstall && request.target === "hermes" && scope === "project") {
+    instructions.push(
+      "Hermes stores MCP servers in ~/.hermes/config.yaml globally. Project scope adds HERMES.md instructions to the project root.",
     );
   }
 
@@ -212,5 +218,24 @@ export function getCodexGlobalPaths() {
     homeDir,
     codexDir,
     configPath: path.join(codexDir, "config.toml"),
+  };
+}
+
+export function getHermesGlobalPaths() {
+  const homeDir = os.homedir();
+  const hermesDir = path.join(homeDir, ".hermes");
+  return {
+    homeDir,
+    hermesDir,
+    configPath: path.join(hermesDir, "config.yaml"),
+    pluginDir: path.join(hermesDir, "plugins", "ori"),
+  };
+}
+
+export function getHermesProjectPaths(startDir: string) {
+  const root = path.resolve(startDir);
+  return {
+    root,
+    instructionsPath: path.join(root, "HERMES.md"),
   };
 }
