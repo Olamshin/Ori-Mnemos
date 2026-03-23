@@ -37,6 +37,7 @@ import {
 import { createProvider, NullProvider } from "../core/llm.js";
 import { getDecayedQ } from "../core/qvalue.js";
 import type { LlmProvider } from "../core/llm.js";
+import { isExploreAuditEnabled, logExploreAudit, type ExploreAuditEvent, type ExploreAuditNote } from "../core/explore-audit.js";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -287,6 +288,79 @@ export async function runExplore(
     }
     if (boosts.size > 0) {
       applyActivationBoosts(mainDb, boosts);
+    }
+  }
+
+  // Explore audit logging
+  if (isExploreAuditEnabled()) {
+    const flatTitleSet = new Set(flatResults.map((r) => r.title));
+    const finalTitleSet = new Set(output.results.map((r) => r.title));
+
+    const toAuditNote = (n: { title: string; score: number; pprScore: number; seedScore: number | null; warmthScore: number | null; source: string }): ExploreAuditNote => ({
+      title: n.title,
+      score: n.score,
+      pprScore: n.pprScore,
+      seedScore: n.seedScore,
+      warmthScore: n.warmthScore,
+      source: n.source,
+    });
+
+    const recursionGains = output.results
+      .filter((r) => !flatTitleSet.has(r.title))
+      .map(toAuditNote);
+
+    const recursionLosses = flatResults
+      .filter((r) => !finalTitleSet.has(r.title))
+      .map((r) => ({
+        title: r.title,
+        score: r.score,
+        pprScore: 0,
+        seedScore: r.score,
+        warmthScore: null,
+        source: "flat" as string,
+      }));
+
+    // Build per-pass with timing and new note titles
+    const perPassAudit = (output.perPassResults ?? []).map((p) => ({
+      query: p.query,
+      depth: p.depth,
+      notesFound: p.notesFound,
+      newNotesAdded: p.newNotesAdded,
+      newNotes: [] as string[],  // individual note names aren't tracked per-pass in current impl
+      elapsedMs: 0,  // per-pass timing not tracked yet
+    }));
+
+    const auditEvent: ExploreAuditEvent = {
+      timestamp: new Date().toISOString(),
+      query,
+      intent: classified.intent,
+      llmProvider: isRecursive ? (config.llm.provider ?? "none") : "none",
+      llmModel: isRecursive ? (config.llm.model ?? "none") : "none",
+      recursive: isRecursive,
+      recursionDepth: output.recursionDepth ?? 0,
+      converged: output.converged ?? false,
+      totalElapsedMs: Date.now() - startTime,
+      flatResults: flatResults.map((r) => ({
+        title: r.title,
+        score: r.score,
+        pprScore: 0,
+        seedScore: r.score,
+        warmthScore: null,
+        source: "flat" as string,
+      })),
+      finalResults: output.results.map(toAuditNote),
+      recursionGains,
+      recursionLosses,
+      subQueries: output.subQueries ?? [],
+      perPassResults: perPassAudit,
+      pathCount: output.paths.length,
+      totalCandidatesScored: output.totalCandidatesScored,
+    };
+
+    try {
+      await logExploreAudit(vaultRoot, auditEvent);
+    } catch {
+      warnings.push("Explore audit logging failed");
     }
   }
 
