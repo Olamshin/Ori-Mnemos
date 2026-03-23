@@ -11,7 +11,10 @@ import {
 import { parseFrontmatter } from "../core/frontmatter.js";
 import { computeGraphMetrics } from "../core/importance.js";
 import { rankByImportance, rankByFading } from "../core/ranking.js";
-import { computeVitalityFull } from "../core/vitality.js";
+import { loadConfig } from "../core/config.js";
+import { computeAllVitality } from "../core/noteindex.js";
+import { initDB } from "../core/engine.js";
+import { loadBoosts } from "../core/activation.js";
 
 export type QueryResult = {
   success: boolean;
@@ -129,42 +132,32 @@ export async function runQueryFading(
   linkGraph?: LinkGraph,
 ): Promise<QueryResult> {
   const vaultRoot = await findVaultRoot(startDir);
-  const { notes: notesDir } = getVaultPaths(vaultRoot);
-  const allNotes = await listNoteTitles(notesDir);
-  const graph = linkGraph ?? await buildGraph(notesDir);
+  const paths = getVaultPaths(vaultRoot);
+  const config = await loadConfig(paths.config);
+  const allNotes = await listNoteTitles(paths.notes);
+  const graph = linkGraph ?? await buildGraph(paths.notes);
   const metrics = computeGraphMetrics(graph);
 
-  const vitalityScores = new Map<string, number>();
-
-  for (const title of allNotes) {
-    const filePath = path.join(notesDir, `${title}.md`);
-    let accessCount = 0;
-    let created = new Date().toISOString().slice(0, 10);
-
-    try {
-      const content = await fs.readFile(filePath, "utf8");
-      const parsed = parseFrontmatter(content);
-      if (parsed.data) {
-        const fm = parsed.data as Record<string, unknown>;
-        if (typeof fm.access_count === "number") accessCount = fm.access_count;
-        if (typeof fm.created === "string") created = fm.created;
-      }
-    } catch {
-      // If file can't be read, use defaults
-    }
-
-    const inDegree = graph.incoming.get(title)?.size ?? 0;
-
-    const vitality = computeVitalityFull({
-      accessCount,
-      created,
-      noteTitle: title,
-      inDegree,
-      bridges: metrics.bridges,
-    });
-
-    vitalityScores.set(title, vitality);
+  // Load spreading activation boosts from SQLite
+  const dbPath = path.resolve(vaultRoot, config.engine.db_path);
+  let boostScores: Map<string, number> | undefined;
+  try {
+    await fs.access(dbPath);
+    const db = initDB(dbPath);
+    boostScores = config.activation?.enabled !== false ? loadBoosts(db) : undefined;
+    db.close();
+  } catch {
+    // DB doesn't exist yet -- no boosts
   }
+
+  const vitalityScores = await computeAllVitality(
+    paths.notes,
+    allNotes,
+    graph,
+    metrics.bridges,
+    config,
+    boostScores,
+  );
 
   const all = rankByFading(allNotes, vitalityScores, threshold ?? 0.3);
   const results = limit != null ? all.slice(0, limit) : all;
