@@ -8,7 +8,9 @@ function createDb(): InstanceType<typeof Database> {
     CREATE TABLE IF NOT EXISTS boosts (
       title TEXT PRIMARY KEY,
       boost REAL NOT NULL,
-      updated TEXT NOT NULL
+      updated TEXT NOT NULL,
+      access_count INTEGER DEFAULT 1,
+      sessions TEXT DEFAULT ''
     )
   `);
   return db;

@@ -540,7 +540,7 @@ export async function runQueryRanked(
       }
     }
     if (allBoosts.size > 0) {
-      applyActivationBoosts(mainDb, allBoosts);
+      applyActivationBoosts(mainDb, allBoosts, sessionId);
     }
   }
 

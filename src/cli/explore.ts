@@ -287,7 +287,7 @@ export async function runExplore(
       }
     }
     if (boosts.size > 0) {
-      applyActivationBoosts(mainDb, boosts);
+      applyActivationBoosts(mainDb, boosts, _sessionId);
     }
   }
 

@@ -97,20 +97,35 @@ export function computeActivationSpread(
 // SQLite persistence
 // ---------------------------------------------------------------------------
 
-/** Decay constant: half-life ~7 days (exp(-0.1 * 7) ≈ 0.497) */
-const DECAY_RATE = 0.1;
+/** Base decay constant: half-life ~7 days for single-access notes */
+const BASE_DECAY_RATE = 0.1;
 
 /** Maximum boost a single query can contribute to one note */
 const PER_QUERY_CAP = 0.05;
 
 /**
- * Load all boosts from DB. Apply time-based decay at read time.
- * Returns decayed current effective boosts.
+ * Ebbinghaus decay rate: repeated access across sessions slows forgetting.
+ *
+ * Single access: decay_rate = 0.1 (half-life ~7 days)
+ * 5 accesses, 3 sessions: decay_rate ≈ 0.05 (half-life ~14 days)
+ * 20 accesses, 10 sessions: decay_rate ≈ 0.025 (half-life ~28 days)
+ *
+ * Formula: base_rate / (1 + 0.2 * ln(1 + access_count) + 0.3 * ln(1 + session_count))
+ * Access count provides base strengthening, session spread provides deeper consolidation.
+ */
+export function ebbinghausDecayRate(accessCount: number, sessionCount: number): number {
+  const strengthening = 0.2 * Math.log1p(accessCount) + 0.3 * Math.log1p(sessionCount);
+  return BASE_DECAY_RATE / (1 + strengthening);
+}
+
+/**
+ * Load all boosts from DB. Apply Ebbinghaus time-based decay at read time.
+ * Notes accessed more frequently and across more sessions decay slower.
  */
 export function loadBoosts(db: InstanceType<typeof Database>): Map<string, number> {
   const rows = db
-    .prepare("SELECT title, boost, updated FROM boosts")
-    .all() as Array<{ title: string; boost: number; updated: string }>;
+    .prepare("SELECT title, boost, updated, access_count, sessions FROM boosts")
+    .all() as Array<{ title: string; boost: number; updated: string; access_count: number; sessions: string }>;
 
   const now = new Date();
   const result = new Map<string, number>();
@@ -118,9 +133,12 @@ export function loadBoosts(db: InstanceType<typeof Database>): Map<string, numbe
   for (const row of rows) {
     const updatedDate = new Date(row.updated);
     const daysSinceUpdate = Math.max(0, (now.getTime() - updatedDate.getTime()) / (1000 * 60 * 60 * 24));
-    const decayedBoost = row.boost * Math.exp(-DECAY_RATE * daysSinceUpdate);
+    const accessCount = row.access_count ?? 1;
+    const sessionCount = row.sessions ? row.sessions.split(",").filter(Boolean).length : 1;
+    const decayRate = ebbinghausDecayRate(accessCount, sessionCount);
+    const decayedBoost = row.boost * Math.exp(-decayRate * daysSinceUpdate);
 
-    if (decayedBoost >= 0.001) { // skip effectively-zero boosts
+    if (decayedBoost >= 0.001) {
       result.set(row.title, decayedBoost);
     }
   }
@@ -131,36 +149,51 @@ export function loadBoosts(db: InstanceType<typeof Database>): Map<string, numbe
 /**
  * Write boosts to DB in one transaction.
  * DECAY-BEFORE-ACCUMULATE: read existing, decay to now, accumulate via log-scale, store.
+ * Tracks access_count and session spread for Ebbinghaus decay.
  */
 export function applyActivationBoosts(
   db: InstanceType<typeof Database>,
   boosts: Map<string, number>,
+  sessionId?: string,
 ): void {
   if (boosts.size === 0) return;
 
   const now = new Date();
   const nowISO = now.toISOString();
 
-  const selectStmt = db.prepare("SELECT boost, updated FROM boosts WHERE title = ?");
+  const selectStmt = db.prepare("SELECT boost, updated, access_count, sessions FROM boosts WHERE title = ?");
   const upsertStmt = db.prepare(
-    "INSERT OR REPLACE INTO boosts (title, boost, updated) VALUES (?, ?, ?)"
+    "INSERT OR REPLACE INTO boosts (title, boost, updated, access_count, sessions) VALUES (?, ?, ?, ?, ?)"
   );
 
   const transaction = db.transaction(() => {
     for (const [title, newBoost] of boosts) {
       const cappedBoost = Math.min(newBoost, PER_QUERY_CAP);
 
-      // Decay existing stored value to now before accumulating
-      const existing = selectStmt.get(title) as { boost: number; updated: string } | undefined;
+      const existing = selectStmt.get(title) as {
+        boost: number; updated: string; access_count: number; sessions: string;
+      } | undefined;
+
+      // Decay using Ebbinghaus rate (access-aware)
+      const accessCount = (existing?.access_count ?? 0) + 1;
+      const existingSessions = existing?.sessions ? existing.sessions.split(",").filter(Boolean) : [];
+      const sessionSet = new Set(existingSessions);
+      if (sessionId) sessionSet.add(sessionId);
+      const sessionCount = sessionSet.size || 1;
+      const decayRate = ebbinghausDecayRate(accessCount - 1, sessionCount); // decay existing at old rate
+
       const decayedExisting = existing
-        ? existing.boost * Math.exp(-DECAY_RATE * Math.max(0,
+        ? existing.boost * Math.exp(-decayRate * Math.max(0,
             (now.getTime() - new Date(existing.updated).getTime()) / (1000 * 60 * 60 * 24)))
         : 0;
 
       // Log-scale accumulation: asymptotic approach to 1.0
       const finalBoost = 1 - (1 - decayedExisting) * (1 - cappedBoost);
 
-      upsertStmt.run(title, finalBoost, nowISO);
+      // Keep only last 20 session IDs to bound storage
+      const sessionsStr = [...sessionSet].slice(-20).join(",");
+
+      upsertStmt.run(title, finalBoost, nowISO, accessCount, sessionsStr);
     }
   });
 

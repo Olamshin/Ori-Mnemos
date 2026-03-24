@@ -65,9 +65,19 @@ export function initDB(dbPath: string): InstanceType<typeof Database> {
     CREATE TABLE IF NOT EXISTS boosts (
       title TEXT PRIMARY KEY,
       boost REAL DEFAULT 0,
-      updated TEXT
+      updated TEXT,
+      access_count INTEGER DEFAULT 1,
+      sessions TEXT DEFAULT ''
     );
   `);
+
+  // Migration: add Ebbinghaus columns to existing boosts tables
+  try {
+    db.exec(`ALTER TABLE boosts ADD COLUMN access_count INTEGER DEFAULT 1`);
+  } catch { /* column already exists */ }
+  try {
+    db.exec(`ALTER TABLE boosts ADD COLUMN sessions TEXT DEFAULT ''`);
+  } catch { /* column already exists */ }
 
   return db;
 }

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.5] - 2026-03-23
+
+### Ebbinghaus Warmth: Memory That Strengthens Through Use
+
+Activation boosts now follow the Ebbinghaus forgetting curve. Notes accessed once fade fast (half-life ~7 days). Notes accessed repeatedly across many sessions become deeply embedded and fade slowly (half-life up to ~28 days).
+
+- **Access count tracking** — each boost increments a per-note access counter
+- **Session spread tracking** — tracks which distinct sessions accessed each note (last 20)
+- **Adaptive decay rate** — `base_rate / (1 + 0.2 * ln(1 + access_count) + 0.3 * ln(1 + session_spread))`
+- **Automatic migration** — existing databases gain the new columns on next open
+
+This is the difference between short-term and long-term memory. Frequently accessed notes across many sessions become part of the agent's resting cognitive state.
+
 ## [0.5.4] - 2026-03-23
 
 ### Active Memory: Warmth Landscape in Orient
