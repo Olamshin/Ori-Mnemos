@@ -47,6 +47,13 @@ export class StageTracker {
   hasResults(): boolean {
     return this.results.length > 0;
   }
+
+  /** Drain results for per-query processing and reset for the next query. */
+  drain(): StageResult[] {
+    const drained = this.results;
+    this.results = [];
+    return drained;
+  }
 }
 
 /**

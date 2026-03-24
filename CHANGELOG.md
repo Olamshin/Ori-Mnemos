@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.3] - 2026-03-23
+
+### RMH Constraint 3: Live Learning
+
+The graph now reshapes during work, not at session end. Every retrieval immediately:
+
+- **Co-occurrence edges** recorded per-query (notes retrieved together get wired together live)
+- **Q-value proxy rewards** applied per-query based on retrieval rank
+- **LinUCB stage learning** updated per-query with correct per-query features (fixes a bug where all stage updates previously used the last query's feature vector)
+
+NPMI recomputation and homeostasis normalization remain at session end (global operations). Everything else is live.
+
+**Why this matters:** For always-on agents with no session end, batch learning means no learning. Live learning is the only option. Cost: ~10-15ms per query (<0.5% overhead).
+
 ## [0.5.1] - 2026-03-23
 
 ### RMH Constraint 2: Recursive Explore

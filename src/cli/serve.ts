@@ -26,11 +26,12 @@ import { runInit } from "./init.js";
 import { GraphCache } from "../core/graph.js";
 import { initDB } from "../core/engine.js";
 // Retrieval intelligence
-import { initQValueTables, batchUpdateQ } from "../core/qvalue.js";
+import { initQValueTables, batchUpdateQ, updateQ } from "../core/qvalue.js";
 import { SessionRewardAccumulator } from "../core/reward.js";
 import {
   initCoOccurrenceTables,
   extractCoOccurrencePairs,
+  recordCoRetrieval,
   recomputeAllNPMI,
   runHomeostasis,
   bootstrapFromWikiLinks,
@@ -193,36 +194,24 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
     try {
       const db = intelligenceDb;
       const tx = db.transaction(() => {
-        // Layer 2: Co-occurrence edges from retrieval log
+        // Co-occurrence: pairs already recorded live per-query.
+        // Session-end: recompute NPMI weights and run homeostasis normalization.
         try {
-          extractCoOccurrencePairs(db, sessionId);
           recomputeAllNPMI(db);
           runHomeostasis(db);
         } catch {
-          // retrieval_log may be empty — skip silently
+          // co_occurrence table may be empty — skip silently
         }
 
-        // Layer 1: Q-value updates from reward signals
+        // Q-values: full reward computation as correction pass.
+        // Per-query proxy rewards already applied; this adds forward-citation
+        // and other session-wide signals that can only be computed at session end.
         if (rewardAccumulator.hasData()) {
           const rewards = rewardAccumulator.computeRewards(db);
           batchUpdateQ(db, rewards, sessionId);
         }
 
-        // Layer 3: Stage meta-learning updates
-        if (sessionStageTracker.hasResults() && sessionQueryFeatures) {
-          const stages = STAGE_CONFIGS.map((c) => loadStage(db, c));
-          for (const result of sessionStageTracker.getResults()) {
-            const stage = stages.find((s) => s.config.id === result.stageId);
-            if (!stage) continue;
-            const reward = computeStageReward(
-              result.qualityBefore,
-              result.qualityAfter,
-              result.computeMs,
-            );
-            stage.update(sessionQueryFeatures, reward);
-            saveStage(db, stage);
-          }
-        }
+        // Stage learning: already updated per-query. Nothing to do here.
       });
       tx();
     } catch {
@@ -610,9 +599,41 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
         for (const [rank, note] of result.data.results.entries()) {
           rewardAccumulator.logRetrieval(note.title, rank, query, intent);
         }
-        // Capture query features for stage meta-learning (use last query's features)
+        // Capture query features for stage meta-learning
         const { extractQueryFeatures } = await import("../core/stage-learner.js");
         sessionQueryFeatures = extractQueryFeatures(query, 0, result.data.count, 0);
+
+        // --- Live learning (Constraint 3) ---
+        if (intelligenceDb) {
+          const titles = result.data.results.slice(0, 9).map((n: { title: string }) => n.title);
+
+          // Live co-occurrence: record pairs for notes co-retrieved in this query
+          if (titles.length > 1) {
+            for (let i = 0; i < titles.length; i++) {
+              for (let j = i + 1; j < titles.length; j++) {
+                recordCoRetrieval(intelligenceDb, titles[i], titles[j]);
+              }
+            }
+          }
+
+          // Live Q-value: proxy reward based on retrieval rank
+          for (const [rank, note] of result.data.results.entries()) {
+            const proxy = 0.05 / Math.log2(rank + 2);
+            updateQ(intelligenceDb, note.title, proxy, sessionId);
+          }
+
+          // Live stage learning: update LinUCB per-query with correct features
+          if (sessionStageTracker.hasResults() && sessionQueryFeatures) {
+            const stages = STAGE_CONFIGS.map((c) => loadStage(intelligenceDb, c));
+            for (const sr of sessionStageTracker.drain()) {
+              const stage = stages.find((s) => s.config.id === sr.stageId);
+              if (!stage) continue;
+              const reward = computeStageReward(sr.qualityBefore, sr.qualityAfter, sr.computeMs);
+              stage.update(sessionQueryFeatures, reward);
+              saveStage(intelligenceDb, stage);
+            }
+          }
+        }
       }
 
       return textResult(result);
@@ -657,6 +678,42 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
         const intent = result.data.intent ?? "semantic";
         for (const [rank, note] of result.data.results.entries()) {
           rewardAccumulator.logRetrieval(note.title, rank, query, intent);
+        }
+
+        // --- Live learning (Constraint 3) ---
+        if (intelligenceDb) {
+          const titles = result.data.results.slice(0, 9).map((n: { title: string }) => n.title);
+
+          // Live co-occurrence
+          if (titles.length > 1) {
+            for (let i = 0; i < titles.length; i++) {
+              for (let j = i + 1; j < titles.length; j++) {
+                recordCoRetrieval(intelligenceDb, titles[i], titles[j]);
+              }
+            }
+          }
+
+          // Live Q-value proxy
+          for (const [rank, note] of result.data.results.entries()) {
+            const proxy = 0.05 / Math.log2(rank + 2);
+            updateQ(intelligenceDb, note.title, proxy, sessionId);
+          }
+
+          // Live stage learning
+          if (sessionStageTracker.hasResults()) {
+            const { extractQueryFeatures } = await import("../core/stage-learner.js");
+            const features = extractQueryFeatures(query, 0, result.data.count, 0);
+            if (features) {
+              const stages = STAGE_CONFIGS.map((c) => loadStage(intelligenceDb, c));
+              for (const sr of sessionStageTracker.drain()) {
+                const stage = stages.find((s) => s.config.id === sr.stageId);
+                if (!stage) continue;
+                const reward = computeStageReward(sr.qualityBefore, sr.qualityAfter, sr.computeMs);
+                stage.update(features, reward);
+                saveStage(intelligenceDb, stage);
+              }
+            }
+          }
         }
       }
 
