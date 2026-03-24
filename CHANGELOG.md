@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.4] - 2026-03-23
+
+### Active Memory: Warmth Landscape in Orient
+
+`ori_orient` now surfaces the memory activation landscape at session start. The agent sees what's warm before doing any work.
+
+- **Top warm notes** — ranked by combined boost + Q-value score, with project tags
+- **Project-level warmth** — aggregated warmth by project (e.g., "ai-agents: 4.2, courtshare: 2.1")
+- **Heating/cooling detection** — notes gaining warmth (active <1 day) vs losing warmth (inactive >3 days)
+
+No new infrastructure. Composes existing boosts table, Q-values, and frontmatter into a lightweight landscape (~25ms added to orient). This is the first step toward active memory — the agent starts every session knowing the shape of what's been on its mind.
+
 ## [0.5.3] - 2026-03-23
 
 ### RMH Constraint 3: Live Learning

@@ -345,6 +345,99 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
           payload.boostCount = boostCount;
         }
 
+        // --- Warmth landscape: what's active in memory ---
+        const topBoosts = db.prepare(`
+          SELECT title, boost, updated,
+            boost * exp(-0.1 * (julianday('now') - julianday(updated))) as decayed,
+            (julianday('now') - julianday(updated)) as days_since
+          FROM boosts
+          WHERE boost * exp(-0.1 * (julianday('now') - julianday(updated))) > 0.001
+          ORDER BY decayed DESC
+          LIMIT 15
+        `).all() as Array<{ title: string; boost: number; updated: string; decayed: number; days_since: number }>;
+
+        const topQ = db.prepare(`
+          SELECT note_id, q_value, update_count
+          FROM note_q
+          WHERE q_value > 0.5
+          ORDER BY q_value DESC
+          LIMIT 10
+        `).all() as Array<{ note_id: string; q_value: number; update_count: number }>;
+
+        // Merge and deduplicate
+        const qMap = new Map(topQ.map(r => [r.note_id, r.q_value]));
+        const seen = new Set<string>();
+        const warmNotes: Array<{
+          title: string; boost: number; qValue: number;
+          warmth: number; daysSince: number; project: string[];
+        }> = [];
+
+        for (const b of topBoosts) {
+          seen.add(b.title);
+          const q = qMap.get(b.title) ?? 0.5;
+          warmNotes.push({
+            title: b.title,
+            boost: Math.round(b.decayed * 1000) / 1000,
+            qValue: Math.round(q * 1000) / 1000,
+            warmth: Math.round((0.6 * b.decayed + 0.4 * Math.max(0, q - 0.5) * 2) * 1000) / 1000,
+            daysSince: Math.round(b.days_since * 10) / 10,
+            project: [],
+          });
+        }
+        for (const q of topQ) {
+          if (seen.has(q.note_id)) continue;
+          warmNotes.push({
+            title: q.note_id,
+            boost: 0,
+            qValue: Math.round(q.q_value * 1000) / 1000,
+            warmth: Math.round(0.4 * Math.max(0, q.q_value - 0.5) * 2 * 1000) / 1000,
+            daysSince: -1,
+            project: [],
+          });
+        }
+        warmNotes.sort((a, b) => b.warmth - a.warmth);
+
+        // Read frontmatter for top warm notes to get project tags
+        const { parseFrontmatter } = await import("../core/frontmatter.js");
+        for (const note of warmNotes.slice(0, 20)) {
+          try {
+            const content = await fs.readFile(
+              path.join(paths.notes, `${note.title}.md`), "utf-8"
+            );
+            const { data } = parseFrontmatter(content);
+            note.project = Array.isArray(data?.project) ? data.project as string[] : [];
+          } catch { /* note file missing */ }
+        }
+
+        // Aggregate by project
+        const byProject: Record<string, { totalWarmth: number; noteCount: number }> = {};
+        for (const note of warmNotes) {
+          for (const proj of note.project) {
+            if (!byProject[proj]) byProject[proj] = { totalWarmth: 0, noteCount: 0 };
+            byProject[proj].totalWarmth = Math.round((byProject[proj].totalWarmth + note.warmth) * 1000) / 1000;
+            byProject[proj].noteCount++;
+          }
+        }
+
+        // Heating/cooling detection
+        const heating = warmNotes.filter(n => n.daysSince >= 0 && n.daysSince < 1 && n.boost > 0.1).map(n => n.title);
+        const cooling = warmNotes.filter(n => n.daysSince > 3).map(n => n.title);
+
+        if (warmNotes.length > 0) {
+          payload.warmthLandscape = {
+            topNotes: warmNotes.slice(0, 10).map(n => ({
+              title: n.title,
+              boost: n.boost,
+              qValue: n.qValue,
+              project: n.project,
+              daysSinceActive: n.daysSince,
+            })),
+            byProject,
+            heating,
+            cooling,
+          };
+        }
+
         // Index health: coverage + freshness
         const indexedCount = (
           db.prepare("SELECT COUNT(*) as cnt FROM embeddings").get() as { cnt: number }
