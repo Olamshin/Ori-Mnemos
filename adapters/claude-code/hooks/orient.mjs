@@ -27,12 +27,11 @@ if (!vaultRoot) {
 const healthResult = spawnSync("ori", ["health"], {
   encoding: "utf8",
   timeout: 8000,
-  shell: true,
 });
 
 if (healthResult.error || healthResult.status !== 0) {
   // Fallback to basic status
-  const result = spawnSync("ori", ["status"], { stdio: "inherit", shell: true });
+  const result = spawnSync("ori", ["status"], { stdio: "inherit" });
   process.exit(result.status ?? 0);
 }
 
@@ -89,7 +88,6 @@ try {
     const gitResult = spawnSync("git", ["remote", "get-url", "origin"], {
       encoding: "utf8",
       timeout: 3000,
-      shell: true,
     });
     if (!gitResult.error && gitResult.stdout) {
       const repoName = path
@@ -104,7 +102,7 @@ try {
   console.log(lines.join("\n"));
 } catch {
   // JSON parse failed, fall back to status
-  const result = spawnSync("ori", ["status"], { stdio: "inherit", shell: true });
+  const result = spawnSync("ori", ["status"], { stdio: "inherit" });
   process.exit(result.status ?? 0);
 }
 

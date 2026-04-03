@@ -63,6 +63,6 @@ if (!normalizedFile.startsWith(normalizedVault)) {
   process.exit(0);
 }
 
-const result = spawnSync("ori", ["validate", filePath], { stdio: "inherit", shell: true });
+const result = spawnSync("ori", ["validate", filePath], { stdio: "inherit" });
 if (result.error) process.exit(0);
 process.exit(result.status ?? 0);
