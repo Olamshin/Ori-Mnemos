@@ -45,12 +45,13 @@
   "author": "Aayo Awoyemi",
   "type": "module",
   "bin": {
-    "ori": "./dist/index.js"
+    "ori-mcp": "./dist/index.js"
   },
   "files": [
     "dist",
     "scaffold",
-    "adapters"
+    "adapters",
+    "assets"
   ],
   "scripts": {
     "build": "tsc",
