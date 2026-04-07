@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { getVersion } from "./core/version.js";
-import { runRepl } from "./cli/repl.js";
 import { runInit, runInitInteractive } from "./cli/init.js";
 import { runStatus } from "./cli/status.js";
 import { runHealth } from "./cli/health.js";
@@ -72,10 +71,7 @@ program
   .description(
     "Ori Mnemos - markdown-native cognitive harness for persistent agent memory"
   )
-  .version(getVersion())
-  .action(async () => {
-    await runRepl(process.cwd());
-  });
+  .version(getVersion());
 
 program
   .command("init")
