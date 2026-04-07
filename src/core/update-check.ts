@@ -6,13 +6,16 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import https from "node:https";
+import { createRequire } from "node:module";
 
 const PACKAGE_NAME = "ori-memory";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const REQUEST_TIMEOUT_MS = 3000; // don't block orient if npm is slow
 
-// Current installed version
-const CURRENT_VERSION = "0.4.0";
+// Read version dynamically from package.json — never goes stale on release
+const _require = createRequire(import.meta.url);
+const CURRENT_VERSION: string =
+  (_require("../../package.json") as { version: string }).version;
 
 export interface UpdateInfo {
   current: string;

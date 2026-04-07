@@ -3,6 +3,11 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
+
+const _require = createRequire(import.meta.url);
+const _pkgVersion: string =
+  (_require("../../package.json") as { version: string }).version;
 import crypto from "node:crypto";
 import { runStatus } from "./status.js";
 import {
@@ -237,7 +242,7 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
   });
 
   const server = new McpServer(
-    { name: "ori-memory", version: "0.4.0" },
+    { name: "ori-memory", version: _pkgVersion },
     { instructions },
   );
 
@@ -853,6 +858,11 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
       return textResult(result);
     }
   );
+
+  // ori_preflight — removed pre-ship. Needs deep learning research to
+  // justify per-turn context cost. Warm context + experience log cover
+  // ambient needs. Code preserved in git history for when retrieval
+  // quality earns the context budget.
 
   // ori_query_important
   server.tool(

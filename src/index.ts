@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import { createRequire } from "node:module";
 import { runInit, runInitInteractive } from "./cli/init.js";
 import { runStatus } from "./cli/status.js";
 import { runHealth } from "./cli/health.js";
@@ -22,6 +23,30 @@ import { runIndexBuild, runIndexStatus } from "./cli/indexcmd.js";
 import { runGraphMetrics, runGraphCommunities } from "./cli/graphcmd.js";
 import { runPrune } from "./cli/prune.js";
 import { runExplore } from "./cli/explore.js";
+import {
+  isTTY,
+  displayStatus,
+  displayHealth,
+  displayQueryOrphans,
+  displayQueryDangling,
+  displayQueryBacklinks,
+  displayQueryCrossProject,
+  displayQueryImportant,
+  displayQueryFading,
+  displayQueryRanked,
+  displayQuerySimilar,
+  displayQueryWarmthAudit,
+  displayValidate,
+  displayAdd,
+  displayPromote,
+  displayArchive,
+  displayIndexBuild,
+  displayIndexStatus,
+  displayGraphMetrics,
+  displayGraphCommunities,
+  displayPrune,
+  displayExplore,
+} from "./cli/display.js";
 
 const program = new Command();
 
@@ -46,7 +71,7 @@ program
   .description(
     "Ori Mnemos - markdown-native cognitive harness for persistent agent memory"
   )
-  .version("0.4.0");
+  .version((createRequire(import.meta.url)("../package.json") as { version: string }).version);
 
 program
   .command("init")
@@ -63,14 +88,16 @@ program
   .command("status")
   .action(async () => {
     const result = await runStatus(process.cwd());
-    console.log(JSON.stringify(result));
+    if (isTTY) { displayStatus(result); }
+    else { console.log(JSON.stringify(result)); }
   });
 
 program
   .command("health")
   .action(async () => {
     const result = await runHealth(process.cwd());
-    console.log(JSON.stringify(result));
+    if (isTTY) { displayHealth(result); }
+    else { console.log(JSON.stringify(result)); }
   });
 
 program
@@ -84,36 +111,44 @@ program
     switch (kind) {
       case "orphans":
         result = await runQueryOrphans(process.cwd());
+        if (isTTY) { displayQueryOrphans(result); return; }
         break;
       case "dangling":
         result = await runQueryDangling(process.cwd());
+        if (isTTY) { displayQueryDangling(result); return; }
         break;
       case "backlinks":
         if (!note) {
           throw new Error("backlinks requires a note title");
         }
         result = await runQueryBacklinks(process.cwd(), note);
+        if (isTTY) { displayQueryBacklinks(result); return; }
         break;
       case "cross-project":
         result = await runQueryCrossProject(process.cwd());
+        if (isTTY) { displayQueryCrossProject(result); return; }
         break;
       case "ranked":
         if (!note) {
           throw new Error("ranked requires a query text");
         }
         result = await runQueryRanked(process.cwd(), note);
+        if (isTTY) { displayQueryRanked(result); return; }
         break;
       case "similar":
         if (!note) {
           throw new Error("similar requires a query text");
         }
         result = await runQuerySimilar(process.cwd(), note);
+        if (isTTY) { displayQuerySimilar(result); return; }
         break;
       case "important":
         result = await runQueryImportant(process.cwd(), options.limit ? parseInt(options.limit, 10) : undefined);
+        if (isTTY) { displayQueryImportant(result); return; }
         break;
       case "fading":
         result = await runQueryFading(process.cwd(), options.threshold ? parseFloat(options.threshold) : undefined);
+        if (isTTY) { displayQueryFading(result); return; }
         break;
       case "warmth-audit":
         result = await runQueryWarmthAudit(
@@ -121,6 +156,7 @@ program
           note,
           options.limit ? parseInt(options.limit, 10) : undefined,
         );
+        if (isTTY) { displayQueryWarmthAudit(result); return; }
         break;
       default:
         throw new Error(`Unknown query kind: ${kind}`);
@@ -133,7 +169,8 @@ program
   .argument("<note>", "path to note")
   .action(async (note: string) => {
     const result = await runValidate({ notePath: note });
-    console.log(JSON.stringify(result));
+    if (isTTY) { displayValidate(result); }
+    else { console.log(JSON.stringify(result)); }
   });
 
 program
@@ -142,7 +179,8 @@ program
   .option("-t, --type <type>", "note type", "insight")
   .action(async (title: string, options: { type: string }) => {
     const result = await runAdd({ startDir: process.cwd(), title, type: options.type });
-    console.log(JSON.stringify(result));
+    if (isTTY) { displayAdd(result); }
+    else { console.log(JSON.stringify(result)); }
   });
 
 program
@@ -179,7 +217,8 @@ program
         links: options.links,
         project: options.project,
       });
-      console.log(JSON.stringify(result));
+      if (isTTY) { displayPromote(result); }
+      else { console.log(JSON.stringify(result)); }
     }
   );
 
@@ -191,7 +230,8 @@ program
       startDir: process.cwd(),
       dryRun: options.dryRun,
     });
-    console.log(JSON.stringify(result));
+    if (isTTY) { displayArchive(result); }
+    else { console.log(JSON.stringify(result)); }
   });
 
 program
@@ -369,9 +409,11 @@ program
     switch (action) {
       case "build":
         result = await runIndexBuild(process.cwd(), options.force);
+        if (isTTY) { displayIndexBuild(result); return; }
         break;
       case "status":
         result = await runIndexStatus(process.cwd());
+        if (isTTY) { displayIndexStatus(result); return; }
         break;
       default:
         throw new Error(`Unknown index action: ${action}`);
@@ -387,9 +429,11 @@ program
     switch (action) {
       case "metrics":
         result = await runGraphMetrics(process.cwd());
+        if (isTTY) { displayGraphMetrics(result); return; }
         break;
       case "communities":
         result = await runGraphCommunities(process.cwd());
+        if (isTTY) { displayGraphCommunities(result); return; }
         break;
       default:
         throw new Error(`Unknown graph action: ${action}`);
@@ -407,7 +451,8 @@ program
       dryRun: !options.apply,
       verbose: options.verbose,
     });
-    console.log(JSON.stringify(result));
+    if (isTTY) { displayPrune(result); }
+    else { console.log(JSON.stringify(result)); }
   });
 
 program
@@ -428,7 +473,8 @@ program
         excludeArchived: options.includeArchived ? false : true,
       },
     );
-    console.log(JSON.stringify(result));
+    if (isTTY) { displayExplore(result); }
+    else { console.log(JSON.stringify(result)); }
   });
 
 program.parseAsync(process.argv).catch((err) => {
