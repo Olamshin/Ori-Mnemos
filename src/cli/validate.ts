@@ -1,20 +1,23 @@
 import path from "node:path";
 import { loadConfig, resolveTemplatePath } from "../core/config.js";
-import { findVaultRoot, getVaultPaths } from "../core/vault.js";
+import { findVaultRoot, getVaultPaths, resolveVaultPath } from "../core/vault.js";
 import { validateNoteAgainstSchema } from "../core/schema.js";
 import { parseFrontmatter } from "../core/frontmatter.js";
 import { promises as fs } from "node:fs";
 
 export type ValidateOptions = {
   notePath: string;
+  startDir?: string;
 };
 
 export async function runValidate(
   options: ValidateOptions
 ): Promise<{ success: boolean; errors: string[]; warnings: string[] }>
 {
-  const absoluteNotePath = path.resolve(options.notePath);
-  const vaultRoot = await findVaultRoot(path.dirname(absoluteNotePath));
+  const vaultRoot = path.isAbsolute(options.notePath)
+    ? await findVaultRoot(path.dirname(path.resolve(options.notePath)))
+    : await findVaultRoot(options.startDir ?? process.cwd());
+  const absoluteNotePath = resolveVaultPath(vaultRoot, options.notePath);
   const vaultPaths = getVaultPaths(vaultRoot);
   const config = await loadConfig(vaultPaths.config);
 

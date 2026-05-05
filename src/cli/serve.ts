@@ -620,7 +620,7 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
       path: z.string().describe("Path to note file"),
     },
     async ({ path }) => {
-      const result = await runValidate({ notePath: path });
+      const result = await runValidate({ notePath: path, startDir: vaultDir });
       return textResult(result);
     }
   );

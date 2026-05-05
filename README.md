@@ -317,6 +317,9 @@ ori bridge status [--json]                                             # Inspect
 ori bridge <target> --uninstall                                        # Remove Ori config for a target
 ```
 
+Path-taking commands treat relative file paths as vault-relative. Absolute
+paths continue to work unchanged.
+
 ---
 
 ## Vault Structure
