@@ -88,6 +88,12 @@ export function getVaultPaths(root: string): VaultPaths {
   };
 }
 
+export function resolveVaultPath(vaultRoot: string, inputPath: string): string {
+  return path.isAbsolute(inputPath)
+    ? path.resolve(inputPath)
+    : path.resolve(vaultRoot, inputPath);
+}
+
 export async function listNoteTitles(notesDir: string): Promise<string[]> {
   try {
     const entries = await fs.readdir(notesDir, { withFileTypes: true });
