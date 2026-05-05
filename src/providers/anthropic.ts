@@ -12,15 +12,13 @@ Your job is to enhance a note that is being promoted from inbox to permanent sto
 Given a note's title, body, and frontmatter, plus context about the vault's existing notes:
 1. Suggest a better description (one sentence, max 200 chars, no trailing period)
 2. Classify the type: idea, decision, learning, insight, blocker, or opportunity
-3. Suggest wiki-links to existing notes that are relevant
-4. Suggest project tags if applicable
-5. Explain your reasoning briefly
+3. Suggest project tags if applicable
+4. Explain your reasoning briefly
 
 Respond with valid JSON matching this schema:
 {
   "type": "string (one of: idea, decision, learning, insight, blocker, opportunity)",
   "description": "string (one sentence, max 200 chars)",
-  "links": ["string array of existing note titles to link to"],
   "project": ["string array of project tags"],
   "reasoning": "string (brief explanation)"
 }
@@ -99,7 +97,6 @@ export class AnthropicProvider implements LlmProvider {
       if (typeof parsed.type === "string") result.type = parsed.type;
       if (typeof parsed.description === "string")
         result.description = parsed.description.slice(0, 200);
-      if (Array.isArray(parsed.links)) result.links = parsed.links;
       if (Array.isArray(parsed.project)) result.project = parsed.project;
       if (typeof parsed.reasoning === "string")
         result.reasoning = parsed.reasoning;

@@ -33,7 +33,6 @@ export type VitalityConfig = {
 export type PromoteConfig = {
   auto: boolean;
   require_llm: boolean;
-  min_confidence: number;
   project_keywords: Record<string, string[]>;
   project_map_routing: Record<string, string>;
   default_area: string;
@@ -142,7 +141,6 @@ export type OriConfig = {
 const DEFAULT_PROMOTE_CONFIG: PromoteConfig = {
   auto: true,
   require_llm: false,
-  min_confidence: 0.6,
   project_keywords: {},
   project_map_routing: {},
   default_area: "index",
@@ -312,8 +310,6 @@ export function applyConfigDefaults(raw: Partial<OriConfig>): OriConfig {
     promote: {
       auto: rawPromote?.auto ?? DEFAULT_PROMOTE_CONFIG.auto,
       require_llm: rawPromote?.require_llm ?? DEFAULT_PROMOTE_CONFIG.require_llm,
-      min_confidence:
-        rawPromote?.min_confidence ?? DEFAULT_PROMOTE_CONFIG.min_confidence,
       project_keywords:
         rawPromote?.project_keywords ?? DEFAULT_PROMOTE_CONFIG.project_keywords,
       project_map_routing:

@@ -27,9 +27,7 @@ export type VaultContext = {
 export type EnhancementSuggestions = {
   type?: string;
   description?: string;
-  links?: string[];
   project?: string[];
-  areas?: string[];
   reasoning?: string;
 };
 

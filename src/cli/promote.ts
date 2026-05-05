@@ -8,6 +8,13 @@ import { validateNoteAgainstSchema } from "../core/schema.js";
 import { computePromotion, isTemplatePlaceholder, type PromoteResult } from "../core/promote.js";
 import type { VaultIndex } from "../core/linkdetect.js";
 import type { ProjectKeywordConfig } from "../core/classify.js";
+import {
+  createProvider,
+  NullProvider,
+  type EnhancementSuggestions,
+  type VaultContext,
+} from "../core/llm.js";
+
 export type PromoteOptions = {
   startDir: string;
   noteName?: string;
@@ -37,10 +44,11 @@ export type PromoteCommandResult = {
   warnings: string[];
 };
 
-function getPromoteConfig(config: { promote: { project_keywords: Record<string, string[]>; project_map_routing: Record<string, string>; default_area: string } }): {
+function getPromoteConfig(config: { promote: { project_keywords: Record<string, string[]>; project_map_routing: Record<string, string>; default_area: string; require_llm: boolean } }): {
   projectConfig: ProjectKeywordConfig;
   mapRouting: Record<string, string>;
   defaultArea: string;
+  requireLlm: boolean;
 } {
   return {
     projectConfig: {
@@ -49,6 +57,7 @@ function getPromoteConfig(config: { promote: { project_keywords: Record<string, 
     },
     mapRouting: config.promote.project_map_routing,
     defaultArea: config.promote.default_area,
+    requireLlm: config.promote.require_llm,
   };
 }
 
@@ -72,6 +81,50 @@ async function buildVaultIndex(
   }
 
   return { titles, frontmatter, graph };
+}
+
+function buildVaultContext(vaultIndex: VaultIndex): VaultContext {
+  const recentNotes = [...vaultIndex.frontmatter.entries()].slice(0, 10).map(
+    ([title, data]) => ({
+      title,
+      type: typeof data.type === "string" ? data.type : "",
+      description: typeof data.description === "string" ? data.description : "",
+    }),
+  );
+  const projectTags = new Set<string>();
+  for (const data of vaultIndex.frontmatter.values()) {
+    const projects = data.project;
+    if (!Array.isArray(projects)) continue;
+    for (const project of projects) {
+      if (typeof project === "string" && project.trim()) projectTags.add(project);
+    }
+  }
+  return {
+    existingTitles: vaultIndex.titles,
+    recentNotes,
+    projectTags: [...projectTags].sort(),
+  };
+}
+
+function titleFromFilename(filename: string): string {
+  return filename.replace(/\.md$/, "").replace(/-/g, " ");
+}
+
+function mergeEnhancementOverrides(
+  options: PromoteOptions,
+  suggestions: EnhancementSuggestions,
+): {
+  type?: string;
+  description?: string;
+  links?: string[];
+  project?: string[];
+} {
+  return {
+    type: options.type ?? suggestions.type,
+    description: options.description ?? suggestions.description,
+    links: options.links,
+    project: options.project ?? suggestions.project,
+  };
 }
 
 async function listInboxNotes(inboxDir: string): Promise<string[]> {
@@ -101,8 +154,11 @@ export async function runPromote(
   const vaultRoot = await findVaultRoot(options.startDir);
   const paths = getVaultPaths(vaultRoot);
   const config = await loadConfig(paths.config);
-  const { projectConfig, mapRouting, defaultArea } = getPromoteConfig(config);
+  const { projectConfig, mapRouting, defaultArea, requireLlm } = getPromoteConfig(config);
   const vaultIndex = await buildVaultIndex(paths.notes);
+  const vaultContext = buildVaultContext(vaultIndex);
+  const provider = await createProvider(config.llm);
+  const hasLlm = !(provider instanceof NullProvider);
 
   // Resolve target inbox notes
   const allInbox = await listInboxNotes(paths.inbox);
@@ -134,6 +190,20 @@ export async function runPromote(
   const promoted: PromotedNote[] = [];
   const skipped: Array<{ path: string; reason: string }> = [];
 
+  if (requireLlm && !hasLlm) {
+    return {
+      success: true,
+      data: {
+        promoted,
+        skipped: targets.map((filename) => ({
+          path: path.join(paths.inbox, filename),
+          reason: "LLM enhancement required but no provider is configured",
+        })),
+      },
+      warnings: ["LLM enhancement required but no provider is configured"],
+    };
+  }
+
   for (const filename of targets) {
     const inboxPath = path.join(paths.inbox, filename);
     const parsed = await readFrontmatterFile(inboxPath);
@@ -161,6 +231,18 @@ export async function runPromote(
       continue;
     }
 
+    let enhancement: EnhancementSuggestions = {};
+    if (hasLlm) {
+      enhancement = await provider.enhance(
+        {
+          title: titleFromFilename(filename),
+          body: parsed.body,
+          frontmatter: parsed.data,
+        },
+        vaultContext,
+      );
+    }
+
     // Compute promotion
     const result: PromoteResult = computePromotion({
       inboxPath,
@@ -168,16 +250,15 @@ export async function runPromote(
       body: parsed.body,
       existingTitles: vaultIndex.titles,
       vaultIndex,
-      overrides: {
-        type: options.type,
-        description: options.description,
-        links: options.links,
-        project: options.project,
-      },
+      overrides: mergeEnhancementOverrides(options, enhancement),
       projectConfig,
       mapRouting,
       defaultArea,
     });
+
+    if (enhancement.reasoning) {
+      result.changes.push(`LLM reasoning: ${enhancement.reasoning}`);
+    }
 
     const destPath = path.join(paths.notes, result.destinationFilename);
 
