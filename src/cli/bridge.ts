@@ -1016,16 +1016,16 @@ const OPENCODE_BRIDGE_SENTINEL = "<!-- ori-bridge:opencode -->";
 function openCodeSnippet(activation: BridgeActivation): string {
   const orientLine =
     activation === "auto"
-      ? "- Ori auto-orients at session start via plugin"
-      : "- Manual activation is enabled; call `ori_orient` when you want session context loaded";
+      ? "Ori auto-orients at session start via plugin"
+      : "Manual activation is enabled; call `ori_orient` when you want session context loaded";
   const persistLine =
     activation === "auto"
-      ? "- Session capture runs automatically at session idle via plugin"
-      : "- Automatic session capture is disabled in manual mode";
+      ? "Session capture runs automatically at session idle via plugin"
+      : "Automatic session capture is disabled in manual mode";
   const validateLine =
     activation === "auto"
-      ? "- Note validation runs automatically when writing to vault notes via plugin"
-      : "- Run `ori validate` manually on notes you create";
+      ? "Note validation runs automatically when writing to vault notes via plugin"
+      : "Run `ori validate` manually on notes you create";
 
   return `# Ori Mnemos - OpenCode Bridge
 
