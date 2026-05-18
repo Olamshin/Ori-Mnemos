@@ -15,7 +15,7 @@ import { runValidate } from "./cli/validate.js";
 import { runAdd } from "./cli/add.js";
 import { runPromote } from "./cli/promote.js";
 import { runArchive } from "./cli/archive.js";
-import { runBridgeClaudeCode, runBridgeClaudeCodeGlobal, runBridgeCodex, runBridgeCursor, runBridgeGeneric, runBridgeHermes, runBridgeStatus } from "./cli/bridge.js";
+import { runBridgeClaudeCode, runBridgeClaudeCodeGlobal, runBridgeCodex, runBridgeCursor, runBridgeGeneric, runBridgeHermes, runBridgeOpenCode, runBridgeStatus } from "./cli/bridge.js";
 import { runServeMcp } from "./cli/serve.js";
 import { runQueryRanked, runQuerySimilar, runQueryWarmthAudit } from "./cli/search.js";
 import { runIndexBuild, runIndexStatus } from "./cli/indexcmd.js";
@@ -207,7 +207,7 @@ program
     target: string,
     options: { global?: boolean; scope?: string; activation?: string; vault?: string; uninstall?: boolean; json?: boolean }
   ) => {
-    if (target !== "claude-code" && target !== "cursor" && target !== "codex" && target !== "hermes" && target !== "generic" && target !== "status") {
+    if (target !== "claude-code" && target !== "cursor" && target !== "codex" && target !== "hermes" && target !== "generic" && target !== "opencode" && target !== "status") {
       throw new Error(`Unknown bridge target: ${target}`);
     }
 
@@ -297,9 +297,11 @@ program
         ? await runBridgeCodex(process.cwd(), request)
       : target === "hermes"
         ? await runBridgeHermes(process.cwd(), request)
+      : target === "opencode"
+        ? await runBridgeOpenCode(process.cwd(), request)
       : await runBridgeGeneric(process.cwd(), request);
 
-    if ((target === "generic" || target === "cursor" || target === "codex" || target === "hermes") && !options.json) {
+    if ((target === "generic" || target === "cursor" || target === "codex" || target === "hermes" || target === "opencode") && !options.json) {
       const data = result.data as {
         client: string;
         operation?: string;

@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { getGlobalVaultPath, isVaultRoot } from "./vault.js";
 
-export type BridgeTarget = "claude-code" | "cursor" | "codex" | "hermes" | "generic";
+export type BridgeTarget = "claude-code" | "cursor" | "codex" | "hermes" | "generic" | "opencode";
 export type BridgeScope = "project" | "global";
 export type BridgeActivation = "auto" | "manual";
 export type VaultResolutionSource = "explicit" | "project" | "global-default" | "none";
@@ -237,5 +237,29 @@ export function getHermesProjectPaths(startDir: string) {
   return {
     root,
     instructionsPath: path.join(root, "HERMES.md"),
+  };
+}
+
+export function getOpenCodeProjectPaths(startDir: string) {
+  const root = path.resolve(startDir);
+  const opencodeDir = path.join(root, ".opencode");
+  return {
+    root,
+    opencodeDir,
+    configPath: path.join(root, "opencode.json"),
+    pluginDir: path.join(opencodeDir, "plugins"),
+    instructionsPath: path.join(root, "AGENTS.md"),
+  };
+}
+
+export function getOpenCodeGlobalPaths() {
+  const homeDir = os.homedir();
+  const opencodeDir = path.join(homeDir, ".config", "opencode");
+  return {
+    homeDir,
+    opencodeDir,
+    configPath: path.join(opencodeDir, "opencode.json"),
+    pluginDir: path.join(opencodeDir, "plugins"),
+    instructionsPath: path.join(opencodeDir, "AGENTS.md"),
   };
 }
