@@ -48,18 +48,51 @@ const ELEPHANT = `⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣠⠤⠤⠶⠒⠒⠒�
 const MCP_CONFIGS: Record<string, { file: string; snippet: string }> = {
   "Claude Code": {
     file: ".claude/settings.json (in your project or ~/.claude/settings.json globally)",
-    snippet: `Recommended:
-ori bridge claude-code --scope global --activation auto --vault /path/to/brain`,
+    snippet: `Recommended (one command):
+ori bridge claude-code --scope global --activation auto --vault /path/to/brain
+
+Or add this to .claude/settings.json:
+{
+  "mcpServers": {
+    "ori": {
+      "command": "ori",
+      "args": ["serve", "--mcp", "--vault", "/path/to/brain"],
+      "env": { "ORI_VAULT": "/path/to/brain" }
+    }
+  }
+}`,
   },
   Cursor: {
     file: ".cursor/mcp.json (in your project root)",
-    snippet: `Recommended:
-ori bridge cursor --scope project --activation manual --vault /path/to/brain`,
+    snippet: `Recommended (one command):
+ori bridge cursor --scope project --activation manual --vault /path/to/brain
+
+Or add this to .cursor/mcp.json:
+{
+  "mcpServers": {
+    "ori": {
+      "command": "ori",
+      "args": ["serve", "--mcp", "--vault", "/path/to/brain"],
+      "env": { "ORI_VAULT": "/path/to/brain" }
+    }
+  }
+}`,
   },
   OpenCode: {
     file: "opencode.json (in your project root)",
-    snippet: `Recommended:
-ori bridge opencode --scope project --activation auto --vault /path/to/brain`,
+    snippet: `Recommended (one command):
+ori bridge opencode --scope project --activation auto --vault /path/to/brain
+
+Or add this to opencode.json:
+{
+  "mcp": {
+    "ori": {
+      "type": "local",
+      "command": ["ori", "serve", "--mcp", "--vault", "/path/to/brain"],
+      "environment": { "ORI_VAULT": "/path/to/brain" }
+    }
+  }
+}`,
   },
   Other: {
     file: "your MCP client's config file",
