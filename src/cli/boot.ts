@@ -56,6 +56,11 @@ ori bridge claude-code --scope global --activation auto --vault /path/to/brain`,
     snippet: `Recommended:
 ori bridge cursor --scope project --activation manual --vault /path/to/brain`,
   },
+  OpenCode: {
+    file: "opencode.json (in your project root)",
+    snippet: `Recommended:
+ori bridge opencode --scope project --activation auto --vault /path/to/brain`,
+  },
   Other: {
     file: "your MCP client's config file",
     snippet: `Print install plan:
@@ -186,6 +191,7 @@ export async function runBootSequence(initResult: InitResult, targetDir: string)
     options: [
       { value: "Claude Code", label: "Claude Code" },
       { value: "Cursor", label: "Cursor" },
+      { value: "OpenCode", label: "OpenCode" },
       { value: "Other", label: "Other MCP client" },
     ],
   });
