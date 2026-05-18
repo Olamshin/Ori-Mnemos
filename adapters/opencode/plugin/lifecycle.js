@@ -2,12 +2,15 @@
  * Ori Mnemos — OpenCode Lifecycle Plugin
  *
  * Provides session lifecycle hooks for Ori vault integration:
- * - session.created → auto-orient (session briefing)
- * - session.idle → auto-capture (session insights)
- * - tool.execute.after (write) → auto-validate (note schema validation)
+ * - session.created → logs that ori_orient MCP tool is available
+ * - session.idle → auto-capture (session insights via `ori add`)
+ * - tool.execute.after (write) → auto-validate (note schema via `ori validate`)
  *
  * Resolves vault path from opencode.json MCP config, so it works with
  * any named MCP entry (ori, coder-memory, research-memory, etc.).
+ *
+ * Note: Auto-orient is handled by MCP instructions (injected by the server).
+ * The `ori_orient` tool is available for the agent to call manually.
  */
 
 import { readFileSync } from "node:fs";
@@ -81,33 +84,16 @@ export const OriLifecyclePlugin = async ({ $, client, directory }) => {
   return {
     event: async ({ event }) => {
       if (event.type === "session.created") {
-        try {
-          await client.app.log({
-            body: {
-              service: "ori",
-              level: "info",
-              message: "Running ori orient...",
-            },
-          });
-          const result = await $`ori orient ${vaultFlag}`;
-          await client.app.log({
-            body: {
-              service: "ori",
-              level: "info",
-              message: "Session oriented successfully",
-              extra: { vault },
-            },
-          });
-        } catch (err) {
-          await client.app.log({
-            body: {
-              service: "ori",
-              level: "warn",
-              message: `Orient failed: ${err.message}`,
-              extra: { vault },
-            },
-          });
-        }
+        // Auto-orient is handled by MCP instructions (identity auto-injected).
+        // Log that the tool is available for manual use.
+        await client.app.log({
+          body: {
+            service: "ori",
+            level: "info",
+            message: "Session started. Identity auto-injected via MCP instructions. Use `ori_orient` tool for full briefing.",
+            extra: { vault },
+          },
+        });
       }
 
       if (event.type === "session.idle") {

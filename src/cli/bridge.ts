@@ -1016,7 +1016,7 @@ const OPENCODE_BRIDGE_SENTINEL = "<!-- ori-bridge:opencode -->";
 function openCodeSnippet(activation: BridgeActivation): string {
   const orientLine =
     activation === "auto"
-      ? "Ori auto-orients at session start via plugin"
+      ? "Identity auto-injected via MCP instructions at session start"
       : "Manual activation is enabled; call `ori_orient` when you want session context loaded";
   const persistLine =
     activation === "auto"
