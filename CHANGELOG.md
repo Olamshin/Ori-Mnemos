@@ -4,13 +4,13 @@
 
 ### OpenCode Bridge: Full Lifecycle Integration
 
-Complete bridge adapter for [OpenCode](https://opencode.ai) with first-run onboarding, session capture, and note validation.
+Complete bridge adapter for [OpenCode](https://opencode.ai) with first-run onboarding and note validation.
 
 - **First-run onboarding** — plugin detects blank `identity.md` and injects onboarding prompt via `client.session.prompt()`
-- **Session capture** — `ori add` runs silently at session idle (no JSON output in chat)
 - **Note validation** — `ori validate` runs silently when writing to vault notes
 - **Multi-vault support** — resolves vault path from `opencode.json` MCP config, works with any named MCP entry
 - **One-command install** — `ori bridge opencode --scope project --activation auto --vault /path/to/vault`
+- **Session capture is agent-driven** — removed `session.idle` auto-capture hook; the plugin has no access to session content. Agents should call `ori_add` MCP tool with the `content` parameter during or at session end.
 
 The OpenCode plugin uses `spawnSync` for silent command execution (matching Claude Code's hook behavior) and `client.session.prompt()` for reliable onboarding injection.
 

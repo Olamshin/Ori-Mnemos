@@ -3,8 +3,10 @@
  *
  * Provides session lifecycle hooks for Ori vault integration:
  * - session.created → detects first run, injects onboarding prompt
- * - session.idle → auto-capture (session insights via `ori add`)
  * - tool.execute.after (write) → auto-validate (note schema via `ori validate`)
+ *
+ * Session capture is agent-driven: the agent calls `ori_add` MCP tool with
+ * the `content` parameter during or at the end of each session.
  *
  * Resolves vault path from opencode.json MCP config, so it works with
  * any named MCP entry (ori, coder-memory, research-memory, etc.).
@@ -127,19 +129,10 @@ export const OriLifecyclePlugin = async ({ client, directory }) => {
 
   return {
     event: async ({ event }) => {
-      await client.app.log({
-        body: {
-          service: "ori",
-          level: "info",
-          message: `EVENT FIRED: ${event.type}`,
-          extra: { eventType: event.type },
-        },
-      });
-
       if (event.type === "session.created") {
         // Extract session ID early for guard check
         const sessionId = event.properties?.sessionID || event.properties?.sessionId || event.sessionId || event.id;
-        
+
         // Guard: skip if already onboarded this session
         if (onboardedSessions.has(sessionId)) {
           await client.app.log({
@@ -232,35 +225,6 @@ export const OriLifecyclePlugin = async ({ client, directory }) => {
               level: "info",
               message: "Session started — identity already configured",
               extra: { vault },
-            },
-          });
-        }
-      }
-
-      if (event.type === "session.idle") {
-        await client.app.log({
-          body: {
-            service: "ori",
-            level: "info",
-            message: "session.idle event received — auto-capture",
-          },
-        });
-
-        const result = runOriCommand(["add", "--auto"], vault);
-        if (result.status === 0) {
-          await client.app.log({
-            body: {
-              service: "ori",
-              level: "info",
-              message: "Auto-capture succeeded",
-            },
-          });
-        } else {
-          await client.app.log({
-            body: {
-              service: "ori",
-              level: "error",
-              message: `Auto-capture failed: ${result.stderr?.toString() || "unknown error"}`,
             },
           });
         }
