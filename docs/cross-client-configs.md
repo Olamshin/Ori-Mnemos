@@ -22,6 +22,36 @@ Add to your project's `.mcp.json` or `~/.claude/settings.json`:
 }
 ```
 
+## OpenCode
+
+Add to your project's `opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "ori": {
+      "type": "local",
+      "command": ["ori", "serve", "--mcp", "--vault", "/path/to/your/vault"],
+      "environment": {
+        "ORI_VAULT": "/path/to/your/vault"
+      }
+    }
+  }
+}
+```
+
+Or use the one-command install:
+
+```bash
+ori bridge opencode --scope project --activation auto --vault /path/to/your/vault
+```
+
+This installs:
+- MCP config in `opencode.json`
+- Lifecycle plugin at `.opencode/plugins/lifecycle.js` (auto-orient on first run, session capture at idle, note validation on write)
+- Bridge instructions in `AGENTS.md`
+
 ## Cursor
 
 Add to `.cursor/mcp.json` in your project root:

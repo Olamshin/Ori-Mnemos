@@ -2,18 +2,16 @@
  * Ori Mnemos — OpenCode Lifecycle Plugin
  *
  * Provides session lifecycle hooks for Ori vault integration:
- * - session.created → logs that ori_orient MCP tool is available
+ * - session.created → detects first run, injects onboarding prompt
  * - session.idle → auto-capture (session insights via `ori add`)
  * - tool.execute.after (write) → auto-validate (note schema via `ori validate`)
  *
  * Resolves vault path from opencode.json MCP config, so it works with
  * any named MCP entry (ori, coder-memory, research-memory, etc.).
- *
- * Note: Auto-orient is handled by MCP instructions (injected by the server).
- * The `ori_orient` tool is available for the agent to call manually.
  */
 
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 const VAULT_NOTE_PATHS = ["notes/", "inbox/", "self/", "ops/"];
@@ -24,17 +22,14 @@ function isVaultNote(filePath) {
 }
 
 function getVaultPath(directory) {
-  // Try environment variable first (set by MCP server launch)
   if (process.env.ORI_VAULT) return process.env.ORI_VAULT;
 
-  // Fall back to reading opencode.json from the project directory
   try {
     const configPath = path.join(directory, "opencode.json");
     const config = JSON.parse(readFileSync(configPath, "utf8"));
     const mcp = config.mcp?.ori;
     if (!mcp) return null;
 
-    // Extract vault from command args
     const cmd = mcp.command;
     if (Array.isArray(cmd)) {
       const vaultIndex = cmd.indexOf("--vault");
@@ -43,7 +38,6 @@ function getVaultPath(directory) {
       }
     }
 
-    // Or from environment in config
     if (mcp.environment?.ORI_VAULT) {
       return mcp.environment.ORI_VAULT;
     }
@@ -54,9 +48,59 @@ function getVaultPath(directory) {
   return null;
 }
 
-export const OriLifecyclePlugin = async ({ $, client, directory }) => {
+function runOriCommand(args, cwd) {
+  const result = spawnSync("ori", args, {
+    cwd,
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout: 10000,
+  });
+  return result;
+}
+
+function isFirstRun(vault) {
+  try {
+    const identityPath = path.join(vault, "self", "identity.md");
+    const content = readFileSync(identityPath, "utf8");
+    // Strip frontmatter, headers, comments, whitespace
+    const stripped = content
+      .replace(/^---[\s\S]*?---/, "")
+      .replace(/^#+\s.*$/gm, "")
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .trim();
+    return stripped.length === 0;
+  } catch {
+    return true; // No identity file = first run
+  }
+}
+
+const ONBOARDING_PROMPT = `This is your FIRST SESSION. Your identity.md is blank.
+
+Run the onboarding flow now:
+1. Ask: "What should I call myself?" (default: Ori)
+2. Ask: "What's my purpose?" — offer: general-purpose AI agent, personal knowledge base, research assistant, work/professional, learning journal, or custom
+3. Say: "Tell me everything about you — what you're working on, what you care about, your projects, your goals. The more you share, the more useful I become."
+4. Ask: "How should I communicate with you?" — direct, formal, casual, opinionated, supportive?
+
+After collecting answers, use the ori_update tool to write:
+- file=identity (name, personality, communication style, values)
+- file=goals (projects and threads from their brain dump)
+- file=methodology (session rhythm based on their purpose)
+
+Make this feel warm and alive — this is their agent waking up for the first time.`;
+
+export const OriLifecyclePlugin = async ({ client, directory }) => {
+  await client.app.log({
+    body: {
+      service: "ori",
+      level: "info",
+      message: "=== PLUGIN LOADED ===",
+      extra: { directory },
+    },
+  });
+
   const vault = getVaultPath(directory);
-  const vaultFlag = vault ? ["--vault", vault] : [];
+  // Track onboarded session IDs to prevent duplicate injection
+  const onboardedSessions = new Set();
 
   if (!vault) {
     await client.app.log({
@@ -83,78 +127,175 @@ export const OriLifecyclePlugin = async ({ $, client, directory }) => {
 
   return {
     event: async ({ event }) => {
+      await client.app.log({
+        body: {
+          service: "ori",
+          level: "info",
+          message: `EVENT FIRED: ${event.type}`,
+          extra: { eventType: event.type },
+        },
+      });
+
       if (event.type === "session.created") {
-        // Auto-orient is handled by MCP instructions (identity auto-injected).
-        // Log that the tool is available for manual use.
+        // Extract session ID early for guard check
+        const sessionId = event.properties?.sessionID || event.properties?.sessionId || event.sessionId || event.id;
+        
+        // Guard: skip if already onboarded this session
+        if (onboardedSessions.has(sessionId)) {
+          await client.app.log({
+            body: {
+              service: "ori",
+              level: "info",
+              message: `Skipping onboarding — already injected for session ${sessionId}`,
+            },
+          });
+          return;
+        }
+
         await client.app.log({
           body: {
             service: "ori",
             level: "info",
-            message: "Session started. Identity auto-injected via MCP instructions. Use `ori_orient` tool for full briefing.",
-            extra: { vault },
+            message: "session.created event received — checking first run",
+            extra: { sessionId, eventKeys: Object.keys(event || {}) },
           },
         });
+
+        const firstRun = isFirstRun(vault);
+        await client.app.log({
+          body: {
+            service: "ori",
+            level: "info",
+            message: `isFirstRun result: ${firstRun}`,
+          },
+        });
+
+        if (firstRun) {
+          // Mark as onboarded immediately to prevent race conditions
+          onboardedSessions.add(sessionId);
+          await client.app.log({
+            body: {
+              service: "ori",
+              level: "info",
+              message: `First run detected — injecting onboarding prompt for session ${sessionId} (once)`,
+            },
+          });
+
+          // Try session.prompt with correct API format
+          try {
+            await client.app.log({
+              body: {
+                service: "ori",
+                level: "info",
+                message: `Attempting session.prompt with sessionId: ${sessionId}`,
+                extra: { properties: JSON.stringify(event.properties || {}) },
+              },
+            });
+            if (sessionId && sessionId.startsWith("ses")) {
+              await client.session.prompt({
+                path: { id: sessionId },
+                body: {
+                  noReply: true,
+                  parts: [{ type: "text", text: ONBOARDING_PROMPT }],
+                },
+              });
+              await client.app.log({
+                body: {
+                  service: "ori",
+                  level: "info",
+                  message: "session.prompt succeeded",
+                },
+              });
+            } else {
+              await client.app.log({
+                body: {
+                  service: "ori",
+                  level: "warn",
+                  message: `Invalid sessionId: ${sessionId}`,
+                },
+              });
+            }
+          } catch (err) {
+            await client.app.log({
+              body: {
+                service: "ori",
+                level: "error",
+                message: `session.prompt failed: ${err.message}`,
+                extra: { stack: err.stack },
+              },
+            });
+          }
+        } else {
+          await client.app.log({
+            body: {
+              service: "ori",
+              level: "info",
+              message: "Session started — identity already configured",
+              extra: { vault },
+            },
+          });
+        }
       }
 
       if (event.type === "session.idle") {
-        try {
-          const timestamp = new Date().toISOString().slice(0, 10);
+        await client.app.log({
+          body: {
+            service: "ori",
+            level: "info",
+            message: "session.idle event received — auto-capture",
+          },
+        });
+
+        const result = runOriCommand(["add", "--auto"], vault);
+        if (result.status === 0) {
           await client.app.log({
             body: {
               service: "ori",
               level: "info",
-              message: `Running session capture for ${timestamp}...`,
+              message: "Auto-capture succeeded",
             },
           });
-          await $`ori add "Session capture ${timestamp}" --type insight ${vaultFlag}`;
+        } else {
           await client.app.log({
             body: {
               service: "ori",
-              level: "info",
-              message: "Session captured successfully",
-              extra: { vault },
-            },
-          });
-        } catch (err) {
-          await client.app.log({
-            body: {
-              service: "ori",
-              level: "warn",
-              message: `Capture failed: ${err.message}`,
-              extra: { vault },
+              level: "error",
+              message: `Auto-capture failed: ${result.stderr?.toString() || "unknown error"}`,
             },
           });
         }
       }
     },
 
-    "tool.execute.after": async (input, output) => {
-      if (input.tool !== "write") return;
-      const filePath = output.args.filePath;
+    "tool.execute.after": async ({ tool, result }) => {
+      if (tool.name !== "write") return;
+
+      const filePath = tool.input?.file_path || tool.input?.path;
       if (!isVaultNote(filePath)) return;
 
-      try {
+      await client.app.log({
+        body: {
+          service: "ori",
+          level: "info",
+          message: `Auto-validating vault note: ${filePath}`,
+        },
+      });
+
+      const validationResult = runOriCommand(["validate", filePath], vault);
+      if (validationResult.status === 0) {
         await client.app.log({
           body: {
             service: "ori",
             level: "info",
-            message: `Validating note: ${filePath}`,
+            message: "Validation passed",
           },
         });
-        await $`ori validate ${filePath} ${vaultFlag}`;
-        await client.app.log({
-          body: {
-            service: "ori",
-            level: "info",
-            message: `Validation complete: ${filePath}`,
-          },
-        });
-      } catch (err) {
+      } else {
         await client.app.log({
           body: {
             service: "ori",
             level: "warn",
-            message: `Validation failed for ${filePath}: ${err.message}`,
+            message: `Validation issues: ${validationResult.stderr?.toString() || "unknown"}`,
           },
         });
       }
