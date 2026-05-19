@@ -49,10 +49,8 @@ ori bridge opencode --scope project --activation auto --vault /path/to/your/vaul
 
 This installs:
 - MCP config in `opencode.json`
-- Lifecycle plugin at `.opencode/plugins/lifecycle.js` (first-run onboarding, note validation on write)
+- Lifecycle plugin at `.opencode/plugins/lifecycle.js` (first-run onboarding, session capture at idle, note validation on write)
 - Bridge instructions in `AGENTS.md`
-
-> **Session capture** is agent-driven, not plugin-driven. The agent calls the `ori_add` MCP tool with the `content` parameter during or at the end of each session. The plugin cannot access session conversation content, so capture must be initiated by the agent itself.
 
 ## Cursor
 

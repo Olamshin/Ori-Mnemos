@@ -140,8 +140,9 @@ program
   .command("add")
   .argument("<title>", "note title")
   .option("-t, --type <type>", "note type", "insight")
-  .action(async (title: string, options: { type: string }) => {
-    const result = await runAdd({ startDir: process.cwd(), title, type: options.type });
+  .option("-c, --content <content>", "note body content (replaces template placeholder)")
+  .action(async (title: string, options: { type: string; content?: string }) => {
+    const result = await runAdd({ startDir: process.cwd(), title, type: options.type, content: options.content });
     console.log(JSON.stringify(result));
   });
 

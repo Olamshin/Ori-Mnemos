@@ -3,10 +3,8 @@
  *
  * Provides session lifecycle hooks for Ori vault integration:
  * - session.created → detects first run, injects onboarding prompt
+ * - session.idle → auto-capture (fetches session messages via SDK, saves via `ori add --content`)
  * - tool.execute.after (write) → auto-validate (note schema via `ori validate`)
- *
- * Session capture is agent-driven: the agent calls `ori_add` MCP tool with
- * the `content` parameter during or at the end of each session.
  *
  * Resolves vault path from opencode.json MCP config, so it works with
  * any named MCP entry (ori, coder-memory, research-memory, etc.).
@@ -225,6 +223,92 @@ export const OriLifecyclePlugin = async ({ client, directory }) => {
               level: "info",
               message: "Session started — identity already configured",
               extra: { vault },
+            },
+          });
+        }
+      }
+
+      if (event.type === "session.idle") {
+        const sessionId = event.properties?.sessionID || event.properties?.sessionId || event.sessionId || event.id;
+        await client.app.log({
+          body: {
+            service: "ori",
+            level: "info",
+            message: `session.idle — capturing session ${sessionId}`,
+          },
+        });
+
+        try {
+          // Fetch all messages from the session
+          const messages = await client.session.messages({ path: { id: sessionId } });
+          if (!messages || !messages.data || messages.data.length === 0) {
+            await client.app.log({
+              body: { service: "ori", level: "warn", message: "No messages to capture" },
+            });
+            return;
+          }
+
+          // Build conversation transcript from messages
+          const parts = [];
+          for (const msg of messages.data) {
+            const role = msg.info?.role || msg.role || "unknown";
+            if (msg.parts && Array.isArray(msg.parts)) {
+              for (const part of msg.parts) {
+                if (part.type === "text" && part.text) {
+                  // Skip system/injected prompts — keep user and assistant content
+                  if (role === "user" || role === "assistant") {
+                    parts.push(`## ${role}\n${part.text}`);
+                  }
+                }
+              }
+            }
+          }
+
+          if (parts.length === 0) {
+            await client.app.log({
+              body: { service: "ori", level: "warn", message: "No text content to capture" },
+            });
+            return;
+          }
+
+          const content = parts.join("\n\n---\n\n");
+          const timestamp = new Date().toISOString().slice(0, 10);
+          const title = `Session capture ${timestamp}`;
+
+          await client.app.log({
+            body: {
+              service: "ori",
+              level: "info",
+              message: `Capturing ${parts.length} message parts (${content.length} chars)`,
+            },
+          });
+
+          const result = runOriCommand(["add", title, "--type", "insight", "--content", content], vault);
+          if (result.status === 0) {
+            const output = result.stdout?.toString().trim();
+            await client.app.log({
+              body: {
+                service: "ori",
+                level: "info",
+                message: `Session captured: ${output}`,
+              },
+            });
+          } else {
+            await client.app.log({
+              body: {
+                service: "ori",
+                level: "error",
+                message: `Capture failed: ${result.stderr?.toString() || "unknown error"}`,
+              },
+            });
+          }
+        } catch (err) {
+          await client.app.log({
+            body: {
+              service: "ori",
+              level: "error",
+              message: `session.idle capture error: ${err.message}`,
+              extra: { stack: err.stack },
             },
           });
         }
