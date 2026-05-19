@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import { readFileSync } from "node:fs";
 import { runInit, runInitInteractive } from "./cli/init.js";
 import { runStatus } from "./cli/status.js";
 import { runHealth } from "./cli/health.js";
@@ -141,8 +142,19 @@ program
   .argument("<title>", "note title")
   .option("-t, --type <type>", "note type", "insight")
   .option("-c, --content <content>", "note body content (replaces template placeholder)")
-  .action(async (title: string, options: { type: string; content?: string }) => {
-    const result = await runAdd({ startDir: process.cwd(), title, type: options.type, content: options.content });
+  .option("-f, --content-file <path>", "path to file containing note body content")
+  .option("--content-stdin", "read note body content from stdin")
+  .action(async (title: string, options: { type: string; content?: string; contentFile?: string; contentStdin?: boolean }) => {
+    let content = options.content;
+    if (options.contentFile) {
+      content = readFileSync(options.contentFile, "utf8");
+    }
+    if (options.contentStdin && !process.stdin.isTTY) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) chunks.push(chunk);
+      content = Buffer.concat(chunks).toString("utf8");
+    }
+    const result = await runAdd({ startDir: process.cwd(), title, type: options.type, content });
     console.log(JSON.stringify(result));
   });
 

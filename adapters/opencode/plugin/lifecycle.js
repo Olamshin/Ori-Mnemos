@@ -3,16 +3,28 @@
  *
  * Provides session lifecycle hooks for Ori vault integration:
  * - session.created → detects first run, injects onboarding prompt
- * - session.idle → auto-capture (fetches session messages via SDK, saves via `ori add --content`)
+ * - session.compacted → auto-capture at context window checkpoint
+ * - session.deleted → auto-capture at session end (fallback for short sessions)
  * - tool.execute.after (write) → auto-validate (note schema via `ori validate`)
  *
  * Resolves vault path from opencode.json MCP config, so it works with
  * any named MCP entry (ori, coder-memory, research-memory, etc.).
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+
+const LOG_FILE = path.join(process.env.APPDATA || process.env.HOME, "opencode", "ori-plugin.log");
+
+function logToFile(message) {
+  try {
+    const dir = path.dirname(LOG_FILE);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const ts = new Date().toISOString();
+    appendFileSync(LOG_FILE, `[${ts}] ${message}\n`);
+  } catch { /* ignore */ }
+}
 
 const VAULT_NOTE_PATHS = ["notes/", "inbox/", "self/", "ops/"];
 
@@ -48,11 +60,24 @@ function getVaultPath(directory) {
   return null;
 }
 
-function runOriCommand(args, cwd) {
-  const result = spawnSync("ori", args, {
+function runOriCommand(args, cwd, content) {
+  const isWindows = process.platform === "win32";
+  const hasContent = content && content.length > 0;
+
+  if (hasContent) {
+    args.push("--content-stdin");
+  }
+
+  // On Windows with shell:true, args with spaces need quoting
+  const finalArgs = isWindows ? args.map(a => a.includes(" ") ? `"${a}"` : a) : args;
+  const cmd = ["ori", ...finalArgs].join(" ");
+
+  const result = spawnSync(cmd, {
     cwd,
+    shell: isWindows,
     stdio: ["pipe", "pipe", "pipe"],
-    timeout: 10000,
+    input: hasContent ? content : undefined,
+    timeout: 30000,
   });
   return result;
 }
@@ -89,6 +114,7 @@ After collecting answers, use the ori_update tool to write:
 Make this feel warm and alive — this is their agent waking up for the first time.`;
 
 export const OriLifecyclePlugin = async ({ client, directory }) => {
+  logToFile("=== PLUGIN LOADED === directory=" + directory);
   await client.app.log({
     body: {
       service: "ori",
@@ -99,8 +125,10 @@ export const OriLifecyclePlugin = async ({ client, directory }) => {
   });
 
   const vault = getVaultPath(directory);
-  // Track onboarded session IDs to prevent duplicate injection
+  // Track onboarded session IDs to prevent duplicate onboarding injection
   const onboardedSessions = new Set();
+  // Track captured session IDs to prevent duplicate session captures
+  const capturedSessions = new Set();
 
   if (!vault) {
     await client.app.log({
@@ -127,6 +155,7 @@ export const OriLifecyclePlugin = async ({ client, directory }) => {
 
   return {
     event: async ({ event }) => {
+      logToFile("EVENT FIRED: " + event.type + " properties=" + JSON.stringify(event.properties || {}));
       if (event.type === "session.created") {
         // Extract session ID early for guard check
         const sessionId = event.properties?.sessionID || event.properties?.sessionId || event.sessionId || event.id;
@@ -228,13 +257,22 @@ export const OriLifecyclePlugin = async ({ client, directory }) => {
         }
       }
 
-      if (event.type === "session.idle") {
+      if (event.type === "session.compacted" || event.type === "session.deleted") {
+        logToFile(event.type + " FIRED — starting capture");
         const sessionId = event.properties?.sessionID || event.properties?.sessionId || event.sessionId || event.id;
+        logToFile("sessionId extracted: " + sessionId);
+
+        // Guard: skip if already captured this session
+        if (capturedSessions.has(sessionId)) {
+          logToFile("Skipping capture — already captured for session " + sessionId);
+          return;
+        }
+
         await client.app.log({
           body: {
             service: "ori",
             level: "info",
-            message: `session.idle — capturing session ${sessionId}`,
+            message: `${event.type} — capturing session ${sessionId}`,
           },
         });
 
@@ -255,7 +293,7 @@ export const OriLifecyclePlugin = async ({ client, directory }) => {
             if (msg.parts && Array.isArray(msg.parts)) {
               for (const part of msg.parts) {
                 if (part.type === "text" && part.text) {
-                  // Skip system/injected prompts — keep user and assistant content
+                  // Keep user and assistant content only
                   if (role === "user" || role === "assistant") {
                     parts.push(`## ${role}\n${part.text}`);
                   }
@@ -271,6 +309,9 @@ export const OriLifecyclePlugin = async ({ client, directory }) => {
             return;
           }
 
+          // Mark as captured before writing to prevent race conditions
+          capturedSessions.add(sessionId);
+
           const content = parts.join("\n\n---\n\n");
           const timestamp = new Date().toISOString().slice(0, 10);
           const title = `Session capture ${timestamp}`;
@@ -283,7 +324,9 @@ export const OriLifecyclePlugin = async ({ client, directory }) => {
             },
           });
 
-          const result = runOriCommand(["add", title, "--type", "insight", "--content", content], vault);
+          // Use stdin to pass content — no temp files, no encoding issues
+          const result = runOriCommand(["add", title, "--type", "insight"], vault, content);
+          logToFile("ori add exit code: " + result.status + " stdout: " + (result.stdout?.toString() || "").slice(0, 200) + " stderr: " + (result.stderr?.toString() || "").slice(0, 200));
           if (result.status === 0) {
             const output = result.stdout?.toString().trim();
             await client.app.log({
@@ -303,11 +346,12 @@ export const OriLifecyclePlugin = async ({ client, directory }) => {
             });
           }
         } catch (err) {
+          logToFile(event.type + " capture error: " + err.message + " stack: " + err.stack);
           await client.app.log({
             body: {
               service: "ori",
               level: "error",
-              message: `session.idle capture error: ${err.message}`,
+              message: `${event.type} capture error: ${err.message}`,
               extra: { stack: err.stack },
             },
           });
