@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import { readFileSync } from "node:fs";
 import { runInit, runInitInteractive } from "./cli/init.js";
 import { runStatus } from "./cli/status.js";
 import { runHealth } from "./cli/health.js";
@@ -15,7 +16,7 @@ import { runValidate } from "./cli/validate.js";
 import { runAdd } from "./cli/add.js";
 import { runPromote } from "./cli/promote.js";
 import { runArchive } from "./cli/archive.js";
-import { runBridgeClaudeCode, runBridgeClaudeCodeGlobal, runBridgeCodex, runBridgeCursor, runBridgeGeneric, runBridgeHermes, runBridgeStatus } from "./cli/bridge.js";
+import { runBridgeClaudeCode, runBridgeClaudeCodeGlobal, runBridgeCodex, runBridgeCursor, runBridgeGeneric, runBridgeHermes, runBridgeOpenCode, runBridgeStatus } from "./cli/bridge.js";
 import { runServeMcp } from "./cli/serve.js";
 import { runQueryRanked, runQuerySimilar, runQueryWarmthAudit } from "./cli/search.js";
 import { runIndexBuild, runIndexStatus } from "./cli/indexcmd.js";
@@ -140,8 +141,20 @@ program
   .command("add")
   .argument("<title>", "note title")
   .option("-t, --type <type>", "note type", "insight")
-  .action(async (title: string, options: { type: string }) => {
-    const result = await runAdd({ startDir: process.cwd(), title, type: options.type });
+  .option("-c, --content <content>", "note body content (replaces template placeholder)")
+  .option("-f, --content-file <path>", "path to file containing note body content")
+  .option("--content-stdin", "read note body content from stdin")
+  .action(async (title: string, options: { type: string; content?: string; contentFile?: string; contentStdin?: boolean }) => {
+    let content = options.content;
+    if (options.contentFile) {
+      content = readFileSync(options.contentFile, "utf8");
+    }
+    if (options.contentStdin && !process.stdin.isTTY) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) chunks.push(chunk);
+      content = Buffer.concat(chunks).toString("utf8");
+    }
+    const result = await runAdd({ startDir: process.cwd(), title, type: options.type, content });
     console.log(JSON.stringify(result));
   });
 
@@ -207,7 +220,7 @@ program
     target: string,
     options: { global?: boolean; scope?: string; activation?: string; vault?: string; uninstall?: boolean; json?: boolean }
   ) => {
-    if (target !== "claude-code" && target !== "cursor" && target !== "codex" && target !== "hermes" && target !== "generic" && target !== "status") {
+    if (target !== "claude-code" && target !== "cursor" && target !== "codex" && target !== "hermes" && target !== "generic" && target !== "opencode" && target !== "status") {
       throw new Error(`Unknown bridge target: ${target}`);
     }
 
@@ -297,9 +310,11 @@ program
         ? await runBridgeCodex(process.cwd(), request)
       : target === "hermes"
         ? await runBridgeHermes(process.cwd(), request)
+      : target === "opencode"
+        ? await runBridgeOpenCode(process.cwd(), request)
       : await runBridgeGeneric(process.cwd(), request);
 
-    if ((target === "generic" || target === "cursor" || target === "codex" || target === "hermes") && !options.json) {
+    if ((target === "generic" || target === "cursor" || target === "codex" || target === "hermes" || target === "opencode") && !options.json) {
       const data = result.data as {
         client: string;
         operation?: string;

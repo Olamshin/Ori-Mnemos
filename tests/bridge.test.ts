@@ -8,6 +8,8 @@ import {
   getCursorGlobalPaths,
   getCursorProjectPaths,
   getHermesGlobalPaths,
+  getOpenCodeGlobalPaths,
+  getOpenCodeProjectPaths,
   resolveBridgePlan,
   selectPreferredBridgePlan,
 } from "../src/core/bridge.js";
@@ -20,10 +22,13 @@ import {
   removeOriFromHermesConfig,
   removeOriFromMcpConfig,
   removeOriFromSettings,
+  removeOriFromOpenCodeConfig,
+  mergeOpenCodeConfig,
   runBridgeClaudeCode,
   runBridgeCodex,
   runBridgeCursor,
   runBridgeHermes,
+  runBridgeOpenCode,
   runBridgeStatus,
 } from "../src/cli/bridge.js";
 
@@ -714,5 +719,191 @@ describe("hermes adapter", () => {
       expect(hermes.configPaths).toEqual([path.join(home, ".hermes", "config.yaml")]);
       expect(hermes.pluginDir).toBe(path.join(home, ".hermes", "plugins", "ori"));
     });
+  });
+});
+
+describe("opencode adapter", () => {
+  it("uses the expected project and global config paths", async () => {
+    const cwd = await makeTempDir();
+    expect(getOpenCodeProjectPaths(cwd).configPath).toBe(path.join(cwd, "opencode.json"));
+    expect(getOpenCodeProjectPaths(cwd).pluginDir).toBe(path.join(cwd, ".opencode", "plugins"));
+    expect(getOpenCodeProjectPaths(cwd).instructionsPath).toBe(path.join(cwd, "AGENTS.md"));
+    expect(getOpenCodeGlobalPaths().configPath).toBe(path.join(os.homedir(), ".config", "opencode", "opencode.json"));
+    expect(getOpenCodeGlobalPaths().pluginDir).toBe(path.join(os.homedir(), ".config", "opencode", "plugins"));
+    expect(getOpenCodeGlobalPaths().instructionsPath).toBe(path.join(os.homedir(), ".config", "opencode", "AGENTS.md"));
+  });
+
+  it("merges OpenCode MCP config without clobbering unrelated servers", async () => {
+    const cwd = await makeTempDir();
+    const plan = await resolveBridgePlan({
+      target: "opencode",
+      startDir: cwd,
+      scope: "global",
+      vault: path.join(cwd, "brain"),
+    });
+
+    const merged = mergeOpenCodeConfig(
+      {
+        mcp: {
+          other: { type: "local", command: ["npx", "-y", "other-mcp"] },
+        },
+      },
+      plan,
+    );
+
+    expect(Object.keys(merged.mcp ?? {}).sort()).toEqual(["ori", "other"]);
+    expect((merged.mcp?.ori as { command: string[] }).command).toEqual([
+      "ori",
+      "serve",
+      "--mcp",
+      "--vault",
+      path.join(cwd, "brain"),
+    ]);
+  });
+
+  it("removes only the Ori MCP server from OpenCode config", () => {
+    const next = removeOriFromOpenCodeConfig({
+      mcp: {
+        ori: { type: "local", command: ["ori", "serve", "--mcp"] },
+        other: { type: "local", command: ["npx", "-y", "other-mcp"] },
+      },
+    });
+    expect(next.mcp).toEqual({
+      other: { type: "local", command: ["npx", "-y", "other-mcp"] },
+    });
+  });
+
+  it("writes OpenCode MCP config and installs plugin on auto activation", async () => {
+    const cwd = await makeTempDir();
+    const brain = path.join(cwd, "brain");
+
+    const result = await runBridgeOpenCode(cwd, {
+      scope: "project",
+      activation: "auto",
+      vault: brain,
+    });
+
+    expect(result.success).toBe(true);
+    const data = result.data as { mutation: string; configPath: string; pluginDir: string; instructionsPath: string };
+    expect(data.mutation).toBe("installed");
+    expect(data.configPath).toBe(path.join(cwd, "opencode.json"));
+    expect(data.pluginDir).toBe(path.join(cwd, ".opencode", "plugins"));
+    expect(data.instructionsPath).toBe(path.join(cwd, "AGENTS.md"));
+
+    // Verify MCP config
+    const config = JSON.parse(await readFile(data.configPath, "utf8")) as {
+      mcp: { ori: { type: string; command: string[]; environment: Record<string, string> } };
+    };
+    expect(config.mcp.ori.type).toBe("local");
+    expect(config.mcp.ori.command).toEqual(["ori", "serve", "--mcp", "--vault", brain]);
+    expect(config.mcp.ori.environment).toEqual({ ORI_VAULT: brain });
+
+    // Verify plugin was installed
+    const pluginContent = await readFile(path.join(data.pluginDir, "lifecycle.js"), "utf8");
+    expect(pluginContent).toContain("OriLifecyclePlugin");
+    expect(pluginContent).toContain("session.created");
+    expect(pluginContent).toContain("session.compacted");
+    expect(pluginContent).toContain("session.deleted");
+    expect(pluginContent).toContain("tool.execute.after");
+    expect(pluginContent).toContain("shell: false");
+    expect(pluginContent).not.toContain("shell: true");
+    expect(pluginContent).not.toContain("join(\" \")");
+    expect(pluginContent).toContain("resolveVaultNotePath");
+    expect(pluginContent).toContain("path.relative(parent, child)");
+    expect(pluginContent).toContain("relative.split(/[\\\\/]/)[0]");
+    expect(pluginContent).toContain("Object.values(config.mcp)");
+
+    // Verify instructions
+    const instructions = await readFile(data.instructionsPath, "utf8");
+    expect(instructions).toContain("<!-- ori-bridge:opencode -->");
+    expect(instructions).toContain("Ori Mnemos - OpenCode Bridge");
+  });
+
+  it("writes project-scope instructions to AGENTS.md", async () => {
+    const cwd = await makeTempDir();
+    const brain = path.join(cwd, "brain");
+
+    const result = await runBridgeOpenCode(cwd, {
+      scope: "project",
+      activation: "manual",
+      vault: brain,
+    });
+
+    expect(result.success).toBe(true);
+    const data = result.data as { instructionsPath: string };
+    expect(data.instructionsPath).toBe(path.join(cwd, "AGENTS.md"));
+
+    const content = await readFile(data.instructionsPath, "utf8");
+    expect(content).toContain("<!-- ori-bridge:opencode -->");
+    expect(content).toContain("Ori Mnemos - OpenCode Bridge");
+    expect(content).toContain("Manual activation");
+  });
+
+  it("updates then uninstalls OpenCode bridge cleanly", async () => {
+    const cwd = await makeTempDir();
+    const brainA = path.join(cwd, "brain-a");
+    const brainB = path.join(cwd, "brain-b");
+
+    const installed = await runBridgeOpenCode(cwd, {
+      scope: "project",
+      activation: "auto",
+      vault: brainA,
+    });
+    expect((installed.data as { mutation: string }).mutation).toBe("installed");
+
+    const updated = await runBridgeOpenCode(cwd, {
+      scope: "project",
+      activation: "auto",
+      vault: brainB,
+    });
+    expect((updated.data as { mutation: string }).mutation).toBe("updated");
+
+    const removed = await runBridgeOpenCode(cwd, {
+      scope: "project",
+      uninstall: true,
+    });
+    expect((removed.data as { mutation: string }).mutation).toBe("uninstalled");
+
+    // Verify config cleaned up
+    const configPath = (removed.data as { configPath: string }).configPath;
+    const config = JSON.parse(await readFile(configPath, "utf8")) as { mcp?: Record<string, unknown> };
+    expect(config.mcp?.ori).toBeUndefined();
+
+    // Verify plugin removed
+    const pluginDir = (removed.data as { pluginDir: string }).pluginDir;
+    try {
+      await readFile(path.join(pluginDir, "lifecycle.js"), "utf8");
+      throw new Error("Plugin should have been removed");
+    } catch (err) {
+      expect((err as Error).message).not.toBe("Plugin should have been removed");
+    }
+  });
+
+  it("reports OpenCode install in bridge status", async () => {
+    const cwd = await makeTempDir();
+    const brain = path.join(cwd, "brain");
+
+    await runBridgeOpenCode(cwd, {
+      scope: "project",
+      activation: "auto",
+      vault: brain,
+    });
+
+    const result = await runBridgeStatus(cwd);
+    const opencode = (result.data as {
+      clients: {
+        opencode: {
+          project: { installed: boolean; resolvedVault: string | null; activation: string | null };
+          active: { scope: string; resolvedVault: string | null; activation: string | null } | null;
+        };
+      };
+    }).clients.opencode;
+
+    expect(opencode.project.installed).toBe(true);
+    expect(opencode.project.resolvedVault).toBe(brain);
+    expect(opencode.project.activation).toBe("auto");
+    expect(opencode.active?.scope).toBe("project");
+    expect(opencode.active?.resolvedVault).toBe(brain);
+    expect(opencode.active?.activation).toBe("auto");
   });
 });

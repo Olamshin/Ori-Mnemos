@@ -15,6 +15,8 @@ import {
   getCursorProjectPaths,
   getHermesGlobalPaths,
   getHermesProjectPaths,
+  getOpenCodeGlobalPaths,
+  getOpenCodeProjectPaths,
   resolveBridgePlan,
   type BridgeActivation,
   type BridgePlan,
@@ -164,7 +166,7 @@ type BridgeMutationKind = "installed" | "updated" | "uninstalled" | "noop";
 type BridgeInstallStatus = {
   installed: boolean;
   scope: "project" | "global";
-  client: "claude-code" | "cursor" | "codex" | "hermes";
+  client: "claude-code" | "cursor" | "codex" | "hermes" | "opencode";
   configPaths: string[];
   mcpPath?: string;
   configPath?: string;
@@ -544,13 +546,15 @@ async function inspectCodexInstall(): Promise<BridgeInstallStatus> {
 }
 
 export async function runBridgeStatus(startDir: string) {
-  const [claudeProject, claudeGlobal, cursorProject, cursorGlobal, codexGlobal, hermesGlobal] = await Promise.all([
+  const [claudeProject, claudeGlobal, cursorProject, cursorGlobal, codexGlobal, hermesGlobal, opencodeProject, opencodeGlobal] = await Promise.all([
     inspectClaudeInstall(startDir, "project"),
     inspectClaudeInstall(startDir, "global"),
     inspectCursorInstall(startDir, "project"),
     inspectCursorInstall(startDir, "global"),
     inspectCodexInstall(),
     inspectHermesInstall(),
+    inspectOpenCodeInstall(startDir, "project"),
+    inspectOpenCodeInstall(startDir, "global"),
   ]);
 
   return {
@@ -569,6 +573,11 @@ export async function runBridgeStatus(startDir: string) {
         },
         codex: codexGlobal,
         hermes: hermesGlobal,
+        opencode: {
+          project: opencodeProject,
+          global: opencodeGlobal,
+          active: opencodeProject.installed ? opencodeProject : opencodeGlobal.installed ? opencodeGlobal : null,
+        },
       },
       precedence: "project-over-global",
       instructions: [
@@ -576,9 +585,10 @@ export async function runBridgeStatus(startDir: string) {
         "Cursor activation is reported as unknown because the adapter currently stores MCP wiring only, not startup behavior.",
         "Codex stores MCP servers in ~/.codex/config.toml only.",
         "Hermes stores MCP servers in ~/.hermes/config.yaml. Auto activation installs a native plugin at ~/.hermes/plugins/ori/.",
+        "OpenCode uses .opencode/plugins/lifecycle.js for lifecycle hooks (orient, validate, capture).",
       ],
+      warnings: [],
     },
-    warnings: [],
   };
 }
 
@@ -1010,6 +1020,284 @@ export async function runBridgeHermes(startDir: string, request: Omit<BridgeRequ
       configPath: globalPaths.configPath,
       pluginDir: globalPaths.pluginDir,
       instructionsPath: plan.scope === "project" ? projectPaths.instructionsPath : undefined,
+    },
+    warnings,
+  };
+}
+
+// ── OpenCode adapter ──────────────────────────────────────────────────────────
+
+const OPENCODE_BRIDGE_SENTINEL = "<!-- ori-bridge:opencode -->";
+
+function openCodeSnippet(activation: BridgeActivation): string {
+  const orientLine =
+    activation === "auto"
+      ? "Identity auto-injected via MCP instructions at session start"
+      : "Manual activation is enabled; call `ori_orient` when you want session context loaded";
+  const persistLine =
+    activation === "auto"
+      ? "Session capture runs automatically at session idle via plugin"
+      : "Automatic session capture is disabled in manual mode";
+  const validateLine =
+    activation === "auto"
+      ? "Note validation runs automatically when writing to vault notes via plugin"
+      : "Run `ori validate` manually on notes you create";
+
+  return `# Ori Mnemos - OpenCode Bridge
+
+## Session Rhythm
+Every session: Orient -> Work -> Persist
+
+### Orient (always first)
+- ${orientLine}
+- Call \`ori_orient\` for session briefing (daily + goals + reminders + vault status)
+- Use \`ori_orient brief=false\` for full context including identity and methodology
+- Read \`ori://identity\` or \`ori://goals\` resources for specific context
+
+### Work
+- Use \`ori_query_ranked\` to find related notes before creating new ones
+- Use \`ori_add\` to capture insights to inbox/
+- NEVER write to notes/ directly — use \`ori_add\` then \`ori_promote\`
+
+### Persist
+- Use \`ori_update\` file=daily to mark completed items
+- Use \`ori_update\` file=goals to update active threads
+- Run \`ori_validate\` on notes you create
+- ${validateLine}
+- ${persistLine}
+- Keep notes atomic and link to maps
+`;
+}
+
+type OpenCodeConfig = {
+  mcp?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+export function mergeOpenCodeConfig(existing: OpenCodeConfig, plan: BridgePlan): OpenCodeConfig {
+  const next: OpenCodeConfig = { ...existing };
+  if (!next.mcp || typeof next.mcp !== "object") {
+    next.mcp = {};
+  } else {
+    next.mcp = { ...next.mcp };
+  }
+
+  next.mcp[ORI_MCP_SENTINEL] = {
+    type: "local",
+    command: [plan.server.command, ...plan.server.args],
+    ...(Object.keys(plan.server.env).length > 0 ? { environment: plan.server.env } : {}),
+  };
+
+  return next;
+}
+
+export function removeOriFromOpenCodeConfig(existing: OpenCodeConfig): OpenCodeConfig {
+  const next: OpenCodeConfig = { ...existing };
+  if (next.mcp && typeof next.mcp === "object") {
+    next.mcp = { ...next.mcp };
+    delete next.mcp[ORI_MCP_SENTINEL];
+    if (Object.keys(next.mcp).length === 0) {
+      delete next.mcp;
+    }
+  }
+  return next;
+}
+
+function classifyOpenCodeConfigMutation(existing: OpenCodeConfig, next: OpenCodeConfig, uninstall = false): BridgeMutationKind {
+  const hadOri = Boolean(existing.mcp && ORI_MCP_SENTINEL in existing.mcp);
+  const hasOri = Boolean(next.mcp && ORI_MCP_SENTINEL in next.mcp);
+  if (uninstall) return hadOri ? "uninstalled" : "noop";
+  if (!hadOri && hasOri) return "installed";
+  if (hadOri && hasOri) return "updated";
+  return "noop";
+}
+
+async function mergeIntoOpenCodeConfigFile(configPath: string, plan: BridgePlan, uninstall = false): Promise<BridgeMutationKind> {
+  let existing: OpenCodeConfig = {};
+  try {
+    const raw = await fs.readFile(configPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      existing = parsed as OpenCodeConfig;
+    }
+  } catch {
+    // file missing or unparseable
+  }
+
+  const merged = uninstall ? removeOriFromOpenCodeConfig(existing) : mergeOpenCodeConfig(existing, plan);
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  await fs.writeFile(configPath, JSON.stringify(merged, null, 2));
+  return classifyOpenCodeConfigMutation(existing, merged, uninstall);
+}
+
+function extractVaultFromOpenCodeConfig(config: OpenCodeConfig | null): string | null {
+  const entry = config?.mcp?.[ORI_MCP_SENTINEL];
+  if (!entry || typeof entry !== "object") return null;
+  const record = entry as Record<string, unknown>;
+  const env = record.environment;
+  if (env && typeof env === "object") {
+    const value = (env as Record<string, unknown>).ORI_VAULT;
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  const command = record.command;
+  if (Array.isArray(command)) {
+    const vaultIndex = command.findIndex((value) => value === "--vault");
+    if (vaultIndex >= 0 && typeof command[vaultIndex + 1] === "string") {
+      return command[vaultIndex + 1] as string;
+    }
+  }
+  return null;
+}
+
+function getOpenCodeAdaptersDir(): string {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  return path.resolve(__dirname, "..", "..", "adapters", "opencode");
+}
+
+async function copyOpenCodePlugin(adaptersDir: string, pluginDir: string): Promise<void> {
+  await fs.mkdir(pluginDir, { recursive: true });
+  await fs.copyFile(
+    path.join(adaptersDir, "plugin", "lifecycle.js"),
+    path.join(pluginDir, "lifecycle.js"),
+  );
+}
+
+async function removeOpenCodePlugin(pluginDir: string): Promise<BridgeMutationKind> {
+  const pluginPath = path.join(pluginDir, "lifecycle.js");
+  try {
+    await fs.stat(pluginPath);
+    await fs.rm(pluginPath, { force: true });
+    return "uninstalled";
+  } catch {
+    return "noop";
+  }
+}
+
+async function appendOpenCodeInstructions(instructionsPath: string, activation: BridgeActivation): Promise<BridgeMutationKind> {
+  let existing = "";
+  try {
+    existing = await fs.readFile(instructionsPath, "utf8");
+  } catch {
+    // file doesn't exist yet
+  }
+  if (existing.includes(OPENCODE_BRIDGE_SENTINEL)) {
+    return "noop";
+  }
+  await fs.appendFile(instructionsPath, `\n\n${OPENCODE_BRIDGE_SENTINEL}\n${openCodeSnippet(activation)}`);
+  return existing.length > 0 ? "updated" : "installed";
+}
+
+export function removeOpenCodeInstructions(content: string): string {
+  const marker = `\n\n${OPENCODE_BRIDGE_SENTINEL}\n`;
+  const idx = content.indexOf(marker);
+  if (idx >= 0) return content.slice(0, idx);
+  return content;
+}
+
+async function uninstallOpenCodeInstructions(instructionsPath: string): Promise<BridgeMutationKind> {
+  try {
+    const existing = await fs.readFile(instructionsPath, "utf8");
+    const next = removeOpenCodeInstructions(existing);
+    await fs.writeFile(instructionsPath, next, "utf8");
+    return next === existing ? "noop" : "uninstalled";
+  } catch {
+    return "noop";
+  }
+}
+
+async function inspectOpenCodeInstall(startDir: string, scope: "project" | "global"): Promise<BridgeInstallStatus> {
+  const paths = scope === "global" ? getOpenCodeGlobalPaths() : getOpenCodeProjectPaths(startDir);
+  const [config, instructions] = await Promise.all([
+    readJsonFile<OpenCodeConfig>(paths.configPath),
+    fs.readFile(paths.instructionsPath, "utf8").catch(() => null),
+  ]);
+
+  const hasMcp = Boolean(config?.mcp?.[ORI_MCP_SENTINEL]);
+  let hasPlugin = false;
+  try {
+    const stat = await fs.stat(path.join(paths.pluginDir, "lifecycle.js"));
+    hasPlugin = stat.isFile();
+  } catch {
+    // no plugin
+  }
+  const hasInstructions = typeof instructions === "string" && instructions.includes(OPENCODE_BRIDGE_SENTINEL);
+  const installed = hasMcp || hasPlugin || hasInstructions;
+  const details: string[] = [];
+
+  if (hasMcp) details.push(`MCP config present at ${paths.configPath}.`);
+  if (hasPlugin) details.push(`Ori lifecycle plugin installed at ${paths.pluginDir}.`);
+  if (hasInstructions) details.push(`Ori bridge instructions present at ${paths.instructionsPath}.`);
+  if (!installed) details.push("No Ori-managed OpenCode bridge config detected.");
+
+  return {
+    installed,
+    client: "opencode",
+    scope,
+    configPaths: [paths.configPath],
+    configPath: paths.configPath,
+    pluginDir: paths.pluginDir,
+    instructionsPath: paths.instructionsPath,
+    activation: hasPlugin ? "auto" : hasMcp ? "manual" : null,
+    resolvedVault: extractVaultFromOpenCodeConfig(config),
+    details,
+  };
+}
+
+export async function runBridgeOpenCode(startDir: string, request: Omit<BridgeRequest, "target" | "startDir"> = {}) {
+  const plan = await resolveBridgePlan({ ...request, target: "opencode", startDir });
+  const paths = plan.scope === "global" ? getOpenCodeGlobalPaths() : getOpenCodeProjectPaths(startDir);
+  const adaptersDir = getOpenCodeAdaptersDir();
+
+  let configMutation: BridgeMutationKind = "noop";
+  let pluginMutation: BridgeMutationKind = "noop";
+  let instructionsMutation: BridgeMutationKind = "noop";
+
+  if (request.uninstall) {
+    configMutation = await mergeIntoOpenCodeConfigFile(paths.configPath, plan, true);
+    pluginMutation = await removeOpenCodePlugin(paths.pluginDir);
+    instructionsMutation = await uninstallOpenCodeInstructions(paths.instructionsPath);
+  } else {
+    configMutation = await mergeIntoOpenCodeConfigFile(paths.configPath, plan);
+
+    if (plan.activation === "auto") {
+      await copyOpenCodePlugin(adaptersDir, paths.pluginDir);
+      pluginMutation = "installed";
+    }
+
+    instructionsMutation = await appendOpenCodeInstructions(paths.instructionsPath, plan.activation);
+  }
+
+  const mutation = summarizeMutations([configMutation, pluginMutation, instructionsMutation]);
+  const warnings = [...plan.warnings];
+  const instructions = [...plan.instructions];
+
+  instructions.push(
+    request.uninstall
+      ? `Removed Ori config from ${paths.configPath}.`
+      : `OpenCode MCP config written to ${paths.configPath}.`,
+  );
+  if (!request.uninstall && plan.activation === "auto") {
+    instructions.push(`Ori lifecycle plugin installed at ${paths.pluginDir}.`);
+  }
+  if (!request.uninstall) {
+    instructions.push(`Bridge instructions appended to ${paths.instructionsPath}.`);
+  }
+
+  return {
+    success: true,
+    data: {
+      ...buildGenericInstallOutput({
+        ...plan,
+        instructions,
+        warnings,
+      }),
+      client: "opencode",
+      operation: request.uninstall ? "uninstall" : "install",
+      mutation,
+      configPath: paths.configPath,
+      pluginDir: paths.pluginDir,
+      instructionsPath: paths.instructionsPath,
     },
     warnings,
   };
