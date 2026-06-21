@@ -27,6 +27,9 @@ CLAUDE.md
 PLAN.md
 ROADMAP.md
 tests/*
+!tests/e2e/
+tests/e2e/*
+!tests/e2e/auto-init.test.ts
 !tests/bridge.test.ts
 !tests/cli/
 tests/cli/*
@@ -48,6 +51,8 @@ tests/core/*
 !tests/core/stage-learner.test.ts
 !tests/core/dampening.test.ts
 !tests/core/classify.test.ts
+!tests/core/activation.test.ts
+!tests/core/vault.test.ts
 !tests/core/vault-path.test.ts
 !tests/core/promote-llm.test.ts
 !tests/mcp/

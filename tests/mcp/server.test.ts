@@ -50,12 +50,13 @@ describe("server initialization", () => {
 // ---------------------------------------------------------------------------
 
 describe("tools listing", () => {
-  it("lists all 15 tools", async () => {
+  it("lists all exposed tools", async () => {
     const result = await ctx.client.listTools();
     const toolNames = result.tools.map((t) => t.name).sort();
 
     expect(toolNames).toEqual([
       "ori_add",
+      "ori_explore",
       "ori_health",
       "ori_index_build",
       "ori_orient",
