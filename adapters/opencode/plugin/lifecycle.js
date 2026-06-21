@@ -15,7 +15,8 @@ import { readFileSync, appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
-const LOG_FILE = path.join(process.env.APPDATA || process.env.HOME, "opencode", "ori-plugin.log");
+const LOG_ROOT = process.env.APPDATA || process.env.HOME || process.cwd();
+const LOG_FILE = path.join(LOG_ROOT, "opencode", "ori-plugin.log");
 
 function logToFile(message) {
   try {
@@ -26,32 +27,72 @@ function logToFile(message) {
   } catch { /* ignore */ }
 }
 
-const VAULT_NOTE_PATHS = ["notes/", "inbox/", "self/", "ops/"];
+const VAULT_NOTE_DIRS = new Set(["notes", "inbox", "self", "ops"]);
 
-function isVaultNote(filePath) {
-  if (!filePath) return false;
-  return VAULT_NOTE_PATHS.some((p) => filePath.includes(p));
+function normalizeForCompare(filePath) {
+  return process.platform === "win32" ? filePath.toLowerCase() : filePath;
+}
+
+function isInside(parent, child) {
+  const relative = path.relative(parent, child);
+  return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function resolveVaultNotePath(filePath, vault, directory) {
+  if (!filePath || typeof filePath !== "string") return null;
+
+  const vaultRoot = path.resolve(vault);
+  const candidates = path.isAbsolute(filePath)
+    ? [path.resolve(filePath)]
+    : [path.resolve(directory, filePath), path.resolve(vaultRoot, filePath)];
+
+  for (const candidate of candidates) {
+    const normalizedVault = normalizeForCompare(vaultRoot);
+    const normalizedCandidate = normalizeForCompare(candidate);
+    if (!isInside(normalizedVault, normalizedCandidate)) continue;
+
+    const relative = path.relative(vaultRoot, candidate);
+    const topLevel = relative.split(/[\\/]/)[0];
+    if (VAULT_NOTE_DIRS.has(topLevel)) return candidate;
+  }
+
+  return null;
+}
+
+function getVaultFromMcpEntry(entry) {
+  if (!entry || typeof entry !== "object") return null;
+
+  const env = entry.environment || entry.env;
+  if (env && typeof env === "object" && typeof env.ORI_VAULT === "string" && env.ORI_VAULT.length > 0) {
+    return env.ORI_VAULT;
+  }
+
+  const commandArgs = Array.isArray(entry.command)
+    ? entry.command
+    : Array.isArray(entry.args)
+      ? entry.args
+      : [];
+  const vaultIndex = commandArgs.indexOf("--vault");
+  if (vaultIndex >= 0 && typeof commandArgs[vaultIndex + 1] === "string" && commandArgs[vaultIndex + 1].length > 0) {
+    return commandArgs[vaultIndex + 1];
+  }
+
+  return null;
 }
 
 function getVaultPath(directory) {
-  if (process.env.ORI_VAULT) return process.env.ORI_VAULT;
+  if (process.env.ORI_VAULT) return path.resolve(process.env.ORI_VAULT);
 
   try {
     const configPath = path.join(directory, "opencode.json");
     const config = JSON.parse(readFileSync(configPath, "utf8"));
-    const mcp = config.mcp?.ori;
-    if (!mcp) return null;
+    const entries = config.mcp && typeof config.mcp === "object"
+      ? [config.mcp.ori, ...Object.values(config.mcp).filter((entry) => entry !== config.mcp.ori)]
+      : [];
 
-    const cmd = mcp.command;
-    if (Array.isArray(cmd)) {
-      const vaultIndex = cmd.indexOf("--vault");
-      if (vaultIndex >= 0 && cmd[vaultIndex + 1]) {
-        return cmd[vaultIndex + 1];
-      }
-    }
-
-    if (mcp.environment?.ORI_VAULT) {
-      return mcp.environment.ORI_VAULT;
+    for (const entry of entries) {
+      const vault = getVaultFromMcpEntry(entry);
+      if (vault) return path.resolve(directory, vault);
     }
   } catch {
     // opencode.json not found or unparseable
@@ -61,24 +102,28 @@ function getVaultPath(directory) {
 }
 
 function runOriCommand(args, cwd, content) {
-  const isWindows = process.platform === "win32";
   const hasContent = content && content.length > 0;
+  const finalArgs = hasContent ? [...args, "--content-stdin"] : [...args];
+  const input = hasContent ? content : undefined;
 
-  if (hasContent) {
-    args.push("--content-stdin");
-  }
-
-  // On Windows with shell:true, args with spaces need quoting
-  const finalArgs = isWindows ? args.map(a => a.includes(" ") ? `"${a}"` : a) : args;
-  const cmd = ["ori", ...finalArgs].join(" ");
-
-  const result = spawnSync(cmd, {
+  const result = spawnSync("ori", finalArgs, {
     cwd,
-    shell: isWindows,
+    shell: false,
     stdio: ["pipe", "pipe", "pipe"],
-    input: hasContent ? content : undefined,
+    input,
     timeout: 30000,
   });
+
+  if (result.error && process.platform === "win32") {
+    return spawnSync("ori.cmd", finalArgs, {
+      cwd,
+      shell: false,
+      stdio: ["pipe", "pipe", "pipe"],
+      input,
+      timeout: 30000,
+    });
+  }
+
   return result;
 }
 
@@ -135,7 +180,7 @@ export const OriLifecyclePlugin = async ({ client, directory }) => {
       body: {
         service: "ori",
         level: "error",
-        message: "No vault path found. Check opencode.json MCP config for 'ori' server with --vault flag.",
+        message: "No vault path found. Check opencode.json MCP config for an Ori MCP server with ORI_VAULT or --vault.",
         extra: { directory },
       },
     });
@@ -359,21 +404,22 @@ export const OriLifecyclePlugin = async ({ client, directory }) => {
       }
     },
 
-    "tool.execute.after": async ({ tool, result }) => {
+    "tool.execute.after": async ({ tool }) => {
       if (tool.name !== "write") return;
 
       const filePath = tool.input?.file_path || tool.input?.path;
-      if (!isVaultNote(filePath)) return;
+      const notePath = resolveVaultNotePath(filePath, vault, directory);
+      if (!notePath) return;
 
       await client.app.log({
         body: {
           service: "ori",
           level: "info",
-          message: `Auto-validating vault note: ${filePath}`,
+          message: `Auto-validating vault note: ${notePath}`,
         },
       });
 
-      const validationResult = runOriCommand(["validate", filePath], vault);
+      const validationResult = runOriCommand(["validate", notePath], vault);
       if (validationResult.status === 0) {
         await client.app.log({
           body: {

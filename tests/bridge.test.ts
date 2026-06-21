@@ -802,8 +802,16 @@ describe("opencode adapter", () => {
     const pluginContent = await readFile(path.join(data.pluginDir, "lifecycle.js"), "utf8");
     expect(pluginContent).toContain("OriLifecyclePlugin");
     expect(pluginContent).toContain("session.created");
-    expect(pluginContent).toContain("session.idle");
+    expect(pluginContent).toContain("session.compacted");
+    expect(pluginContent).toContain("session.deleted");
     expect(pluginContent).toContain("tool.execute.after");
+    expect(pluginContent).toContain("shell: false");
+    expect(pluginContent).not.toContain("shell: true");
+    expect(pluginContent).not.toContain("join(\" \")");
+    expect(pluginContent).toContain("resolveVaultNotePath");
+    expect(pluginContent).toContain("path.relative(parent, child)");
+    expect(pluginContent).toContain("relative.split(/[\\\\/]/)[0]");
+    expect(pluginContent).toContain("Object.values(config.mcp)");
 
     // Verify instructions
     const instructions = await readFile(data.instructionsPath, "utf8");
