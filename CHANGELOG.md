@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.6] - 2026-05-18
+
+### OpenCode Bridge: Full Lifecycle Integration
+
+Complete bridge adapter for [OpenCode](https://opencode.ai) with first-run onboarding, session capture, and note validation.
+
+- **First-run onboarding** — plugin detects blank `identity.md` and injects onboarding prompt via `client.session.prompt()`
+- **Session capture** — `session.idle` hook fetches conversation messages via SDK `client.session.messages()` and saves via `ori add --content`
+- **Note validation** — `ori validate` runs silently when writing to vault notes
+- **Multi-vault support** — resolves vault path from `opencode.json` MCP config, works with any named MCP entry
+- **One-command install** — `ori bridge opencode --scope project --activation auto --vault /path/to/vault`
+- **Added `--content` flag to `ori add`** — allows programmatic note creation with real content (replaces template placeholder)
+
+The OpenCode plugin uses `spawnSync` for silent command execution (matching Claude Code's hook behavior) and `client.session.prompt()` for reliable onboarding injection.
+
 ## [0.5.5] - 2026-03-23
 
 ### Ebbinghaus Warmth: Memory That Strengthens Through Use

@@ -61,6 +61,7 @@ Connect to your agent:
 # Full adapters — auto-orient at session start, capture at session end
 ori bridge claude-code --vault ~/brain                 # hooks + MCP + CLAUDE.md
 ori bridge hermes --vault ~/brain                      # native plugin + MCP + HERMES.md
+ori bridge opencode --vault ~/brain                    # plugin + MCP + AGENTS.md
 
 # MCP-only adapters — tools available, no lifecycle automation
 ori bridge cursor --vault ~/brain                      # .cursor/mcp.json
@@ -70,7 +71,7 @@ ori bridge codex --vault ~/brain                       # ~/.codex/config.toml
 ori bridge generic --vault ~/brain                     # prints config for manual setup
 ```
 
-Claude Code and Hermes Agent get full lifecycle integration — the agent orients at session start, captures insights at session end, and validates notes on write. Cursor, Codex, and other MCP clients get access to all 16 tools but manage their own session lifecycle.
+Claude Code, Hermes Agent, and OpenCode get full lifecycle integration — the agent orients at session start, captures insights at session end, and validates notes on write. Cursor, Codex, and other MCP clients get access to all 16 tools but manage their own session lifecycle.
 
 Manual MCP config (works with any client that speaks MCP):
 
@@ -310,6 +311,7 @@ ori graph communities             # Louvain clustering
 ori serve --mcp [--vault <path>]                                # Run MCP server
 ori bridge claude-code [--scope <s>] [--activation <a>] [--vault <p>]  # Claude Code (hooks + MCP + instructions)
 ori bridge hermes [--scope <s>] [--activation <a>] [--vault <p>]       # Hermes Agent (plugin + MCP + instructions)
+ori bridge opencode [--scope <s>] [--activation <a>] [--vault <p>]     # OpenCode (plugin + MCP + AGENTS.md)
 ori bridge cursor [--scope <s>] [--vault <p>]                          # Cursor (MCP config)
 ori bridge codex [--scope <s>] [--vault <p>]                           # Codex (TOML config)
 ori bridge generic [--scope <s>] [--vault <p>] [--json]                # Any MCP client (prints config)
@@ -379,7 +381,7 @@ Bridge lifecycle:
 - use `--uninstall` to remove Ori-owned config from supported adapters
 - generic installs emit manual uninstall instructions because Ori does not own that client config surface
 
-Claude Code and Hermes Agent are fully automated adapters with lifecycle hooks. Claude Code uses hook scripts; Hermes uses a native Python plugin installed at `~/.hermes/plugins/ori/`. Both auto-orient at session start and capture insights at session end. Cursor and Codex have native MCP config install support. Codex writes to `~/.codex/config.toml` and uses a single global config surface; "project" scope there means project-like runtime vault discovery, not a separate project config file. Other MCP-capable clients can use `ori bridge generic` now and wire the emitted config into their own client surface.
+Claude Code, Hermes Agent, and OpenCode are fully automated adapters with lifecycle hooks. Claude Code uses hook scripts; Hermes uses a native Python plugin installed at `~/.hermes/plugins/ori/`; OpenCode uses a JavaScript plugin at `.opencode/plugins/lifecycle.js`. All three auto-orient at session start (via first-run detection) and capture insights at session idle. Cursor and Codex have native MCP config install support. Codex writes to `~/.codex/config.toml` and uses a single global config surface; "project" scope there means project-like runtime vault discovery, not a separate project config file. Other MCP-capable clients can use `ori bridge generic` now and wire the emitted config into their own client surface.
 
 ---
 
