@@ -94,6 +94,41 @@ export function resolveVaultPath(vaultRoot: string, inputPath: string): string {
     : path.resolve(vaultRoot, inputPath);
 }
 
+/**
+ * Resolve a user-supplied note reference to an absolute path, with a fallback
+ * for bare filenames. Absolute paths and explicitly-directoried relative paths
+ * (e.g. "notes/foo.md") resolve directly against the vault root. A bare
+ * filename with no directory (e.g. "foo.md" or "foo") is looked up in the vault
+ * root, then inbox/, then notes/, returning the first that exists — so a note
+ * can be addressed by title without the caller knowing its lifecycle stage. If
+ * none exist, the inbox/ candidate is returned so a resulting ENOENT points at
+ * the canonical home of a freshly-added note.
+ */
+export async function resolveNotePath(
+  vaultRoot: string,
+  inputPath: string,
+): Promise<string> {
+  if (path.isAbsolute(inputPath)) return path.resolve(inputPath);
+  if (/[\\/]/.test(inputPath)) return path.resolve(vaultRoot, inputPath);
+
+  const paths = getVaultPaths(vaultRoot);
+  const filename = inputPath.endsWith(".md") ? inputPath : `${inputPath}.md`;
+  const candidates = [
+    path.resolve(vaultRoot, filename),
+    path.join(paths.inbox, filename),
+    path.join(paths.notes, filename),
+  ];
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {
+      // not here — try the next location
+    }
+  }
+  return candidates[1]; // default to inbox/ for an informative, vault-scoped ENOENT
+}
+
 export async function listNoteTitles(notesDir: string): Promise<string[]> {
   try {
     const entries = await fs.readdir(notesDir, { withFileTypes: true });

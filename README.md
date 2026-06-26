@@ -320,7 +320,10 @@ ori bridge <target> --uninstall                                        # Remove 
 ```
 
 Path-taking commands treat relative file paths as vault-relative. Absolute
-paths continue to work unchanged.
+paths continue to work unchanged. A bare note filename with no directory (e.g.
+`my-note.md`, or `my-note` without the extension) is looked up in the vault
+root, then `inbox/`, then `notes/` — so a note can be addressed by title
+without knowing its lifecycle stage.
 
 ---
 
