@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { runInit, runInitInteractive } from "./cli/init.js";
 import { runStatus } from "./cli/status.js";
 import { runHealth } from "./cli/health.js";
+import { runOrient } from "./cli/orient.js";
 import {
   runQueryBacklinks,
   runQueryDangling,
@@ -71,6 +72,16 @@ program
   .command("health")
   .action(async () => {
     const result = await runHealth(process.cwd());
+    console.log(JSON.stringify(result));
+  });
+
+program
+  .command("orient")
+  .description("Session briefing: daily status, reminders, goals, vault + index health")
+  .option("--full", "include identity and methodology (brief=false)")
+  .option("--vault <path>", "explicit vault root path")
+  .action(async (options: { full?: boolean; vault?: string }) => {
+    const result = await runOrient(process.cwd(), { brief: !options.full, vault: options.vault });
     console.log(JSON.stringify(result));
   });
 

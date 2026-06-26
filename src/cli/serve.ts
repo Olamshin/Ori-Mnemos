@@ -21,6 +21,7 @@ import { runQueryRanked, runQuerySimilar, runQueryWarmth } from "./search.js";
 import { runExplore } from "./explore.js";
 import { runIndexBuild } from "./indexcmd.js";
 import { runPrune } from "./prune.js";
+import { buildOrientPayload } from "./orient.js";
 import { findVaultRootWithSource, getGlobalVaultPath, getVaultPaths, type VaultPaths } from "../core/vault.js";
 import { runInit } from "./init.js";
 import { GraphCache } from "../core/graph.js";
@@ -45,7 +46,6 @@ import {
 } from "../core/stage-learner.js";
 import { StageTracker } from "../core/stage-tracker.js";
 import type Database from "better-sqlite3";
-import { checkForUpdate } from "../core/update-check.js";
 
 let vaultDir: string;
 const graphCache = new GraphCache();
@@ -295,216 +295,12 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
       brief: z.boolean().optional().describe("Quick status only — skip identity and methodology (default true)"),
     },
     async ({ brief }) => {
-      const isBrief = brief !== false;
-
-      const [daily, reminders] = await Promise.all([
-        safeReadFile(path.join(paths.ops, "daily.md")),
-        safeReadFile(path.join(paths.ops, "reminders.md")),
-      ]);
-      const status = await runStatus(vaultDir, await graphCache.get(paths.notes));
-
-      const payload: Record<string, unknown> = {
-        daily,
-        reminders,
-        vaultStatus: status.data,
-        timestamp: new Date().toISOString(),
-      };
-
-      if (!isBrief) {
-        const [identity, goals, methodology] = await Promise.all([
-          safeReadFile(path.join(paths.self, "identity.md")),
-          safeReadFile(path.join(paths.self, "goals.md")),
-          safeReadFile(path.join(paths.self, "methodology.md")),
-        ]);
-        payload.identity = identity;
-        payload.goals = goals;
-        payload.methodology = methodology;
-        payload.firstRun = isFirstRun(identity);
-      } else {
-        // Brief mode still includes goals (what you're working on)
-        const goals = await safeReadFile(path.join(paths.self, "goals.md"));
-        payload.goals = goals;
-
-        // Check first-run even in brief mode so bootstrap path works
-        const identity = await safeReadFile(path.join(paths.self, "identity.md"));
-        payload.firstRun = isFirstRun(identity);
-      }
-
-      // Quick zone scan — check boosts + index health
-      // Lightweight: do NOT recompute all vitalities during orient
-      try {
-        const dbPath = path.resolve(vaultDir, ".ori", "embeddings.db");
-        await fs.access(dbPath);
-        const { initDB } = await import("../core/engine.js");
-        const db = initDB(dbPath);
-        const boostCount = (
-          db.prepare("SELECT COUNT(*) as cnt FROM boosts").get() as { cnt: number }
-        ).cnt;
-        if (boostCount > 0) {
-          payload.activationActive = true;
-          payload.boostCount = boostCount;
-        }
-
-        // --- Warmth landscape: what's active in memory ---
-        const topBoosts = db.prepare(`
-          SELECT title, boost, updated,
-            boost * exp(-0.1 * (julianday('now') - julianday(updated))) as decayed,
-            (julianday('now') - julianday(updated)) as days_since
-          FROM boosts
-          WHERE boost * exp(-0.1 * (julianday('now') - julianday(updated))) > 0.001
-          ORDER BY decayed DESC
-          LIMIT 15
-        `).all() as Array<{ title: string; boost: number; updated: string; decayed: number; days_since: number }>;
-
-        const topQ = db.prepare(`
-          SELECT note_id, q_value, update_count
-          FROM note_q
-          WHERE q_value > 0.5
-          ORDER BY q_value DESC
-          LIMIT 10
-        `).all() as Array<{ note_id: string; q_value: number; update_count: number }>;
-
-        // Merge and deduplicate
-        const qMap = new Map(topQ.map(r => [r.note_id, r.q_value]));
-        const seen = new Set<string>();
-        const warmNotes: Array<{
-          title: string; boost: number; qValue: number;
-          warmth: number; daysSince: number; project: string[];
-        }> = [];
-
-        for (const b of topBoosts) {
-          seen.add(b.title);
-          const q = qMap.get(b.title) ?? 0.5;
-          warmNotes.push({
-            title: b.title,
-            boost: Math.round(b.decayed * 1000) / 1000,
-            qValue: Math.round(q * 1000) / 1000,
-            warmth: Math.round((0.6 * b.decayed + 0.4 * Math.max(0, q - 0.5) * 2) * 1000) / 1000,
-            daysSince: Math.round(b.days_since * 10) / 10,
-            project: [],
-          });
-        }
-        for (const q of topQ) {
-          if (seen.has(q.note_id)) continue;
-          warmNotes.push({
-            title: q.note_id,
-            boost: 0,
-            qValue: Math.round(q.q_value * 1000) / 1000,
-            warmth: Math.round(0.4 * Math.max(0, q.q_value - 0.5) * 2 * 1000) / 1000,
-            daysSince: -1,
-            project: [],
-          });
-        }
-        warmNotes.sort((a, b) => b.warmth - a.warmth);
-
-        // Read frontmatter for top warm notes to get project tags
-        const { parseFrontmatter } = await import("../core/frontmatter.js");
-        for (const note of warmNotes.slice(0, 20)) {
-          try {
-            const content = await fs.readFile(
-              path.join(paths.notes, `${note.title}.md`), "utf-8"
-            );
-            const { data } = parseFrontmatter(content);
-            note.project = Array.isArray(data?.project) ? data.project as string[] : [];
-          } catch { /* note file missing */ }
-        }
-
-        // Aggregate by project
-        const byProject: Record<string, { totalWarmth: number; noteCount: number }> = {};
-        for (const note of warmNotes) {
-          for (const proj of note.project) {
-            if (!byProject[proj]) byProject[proj] = { totalWarmth: 0, noteCount: 0 };
-            byProject[proj].totalWarmth = Math.round((byProject[proj].totalWarmth + note.warmth) * 1000) / 1000;
-            byProject[proj].noteCount++;
-          }
-        }
-
-        // Heating/cooling detection
-        const heating = warmNotes.filter(n => n.daysSince >= 0 && n.daysSince < 1 && n.boost > 0.1).map(n => n.title);
-        const cooling = warmNotes.filter(n => n.daysSince > 3).map(n => n.title);
-
-        if (warmNotes.length > 0) {
-          payload.warmthLandscape = {
-            topNotes: warmNotes.slice(0, 10).map(n => ({
-              title: n.title,
-              boost: n.boost,
-              qValue: n.qValue,
-              project: n.project,
-              daysSinceActive: n.daysSince,
-            })),
-            byProject,
-            heating,
-            cooling,
-          };
-        }
-
-        // Index health: coverage + freshness
-        const indexedCount = (
-          db.prepare("SELECT COUNT(*) as cnt FROM embeddings").get() as { cnt: number }
-        ).cnt;
-        const metaRows = db
-          .prepare("SELECT key, value FROM meta")
-          .all() as Array<{ key: string; value: string }>;
-        db.close();
-
-        const meta: Record<string, string> = {};
-        for (const row of metaRows) meta[row.key] = row.value;
-
-        // Count actual notes on disk
-        let noteFileCount = 0;
-        try {
-          const dirents = await fs.readdir(paths.notes, { withFileTypes: true });
-          noteFileCount = dirents.filter(d => d.isFile() && d.name.endsWith(".md")).length;
-        } catch { /* notes dir missing */ }
-
-        const staleCount = Math.max(0, noteFileCount - indexedCount);
-        const builtAt = meta.built_at ?? null;
-        const hoursSinceBuild = builtAt
-          ? (Date.now() - new Date(builtAt).getTime()) / 3_600_000
-          : null;
-
-        payload.indexHealth = {
-          indexed: indexedCount,
-          totalNotes: noteFileCount,
-          stale: staleCount,
-          coveragePercent: noteFileCount > 0
-            ? Math.round((indexedCount / noteFileCount) * 100)
-            : 100,
-          builtAt,
-          hoursSinceBuild: hoursSinceBuild !== null ? Math.round(hoursSinceBuild * 10) / 10 : null,
-          warning: staleCount > 10
-            ? `${staleCount} notes not indexed — warmth signal is degraded. Run ori_index_build.`
-            : hoursSinceBuild !== null && hoursSinceBuild > 48
-              ? `Index is ${Math.round(hoursSinceBuild)}h old — consider running ori_index_build.`
-              : null,
-        };
-      } catch {
-        // No DB or no boosts table yet — skip
-      }
-
-      // Include onboarding steps when first-run detected
-      if (payload.firstRun) {
-        payload.onboarding = {
-          steps: [
-            "Ask the user to NAME their agent (default: Ori)",
-            "Ask the PURPOSE — offer: general-purpose AI agent, personal knowledge, research, work/professional, learning journal, or custom",
-            "BRAIN DUMP — ask them to share everything about themselves, projects, goals. More context = better agent from day one",
-            "COMMUNICATION STYLE — how should the agent talk? Direct? Formal? Casual? Opinionated?",
-          ],
-          save_with: "Use ori_update to write identity, goals, and methodology based on their answers",
-        };
-      }
-
-      // Check for updates (best-effort, cached 24h)
-      try {
-        const update = await checkForUpdate();
-        if (update.updateAvailable) {
-          payload.updateAvailable = update;
-        }
-      } catch {
-        // Never fail orient for an update check
-      }
-
+      const payload = await buildOrientPayload({
+        vaultDir,
+        paths,
+        graphCache,
+        brief: brief !== false,
+      });
       return textResult(payload);
     }
   );
