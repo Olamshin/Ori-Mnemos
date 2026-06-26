@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import { findVaultRoot, getVaultPaths } from "../core/vault.js";
 import { loadConfig, resolveTemplatePath } from "../core/config.js";
 import { parseFrontmatter, stringifyFrontmatter } from "../core/frontmatter.js";
+import { slugify } from "../core/slug.js";
 import { runValidate } from "./validate.js";
 import { runPromote } from "./promote.js";
 
@@ -32,14 +33,6 @@ function validateTitle(title: string): { valid: boolean; reason?: string } {
   if (trimmed.length < 10)
     return { valid: false, reason: "Title too short for a meaningful claim" };
   return { valid: true };
-}
-
-function slugify(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-");
 }
 
 export async function runAdd(options: AddOptions): Promise<AddResult> {

@@ -59,10 +59,42 @@ describe("buildGraph", () => {
     expect(graph.incoming.size).toBe(0);
   });
 
-  it("trims whitespace in link targets", async () => {
+  it("normalizes whitespace in link targets to a slug", async () => {
     await writeNote("note", "Link to [[ spaced target ]].");
     const graph = await buildGraph(notesDir);
-    expect(graph.outgoing.get("note")!.has("spaced target")).toBe(true);
+    expect(graph.outgoing.get("note")!.has("spaced-target")).toBe(true);
+  });
+
+  it("resolves display-title wikilinks to the note slug", async () => {
+    // A note's identity is its filename slug, but links are authored against
+    // the display title. These must resolve to the same node.
+    await writeNote("vikunja-gtd-workflow-conventions", "A note.");
+    await writeNote(
+      "hermes-agent-configuration-preferences",
+      "Relevant: [[Vikunja GTD Workflow Conventions]].",
+    );
+    const graph = await buildGraph(notesDir);
+    expect(
+      graph.outgoing
+        .get("hermes-agent-configuration-preferences")!
+        .has("vikunja-gtd-workflow-conventions"),
+    ).toBe(true);
+    const allNotes = [
+      "vikunja-gtd-workflow-conventions",
+      "hermes-agent-configuration-preferences",
+    ];
+    expect(findOrphans(graph, allNotes)).not.toContain(
+      "vikunja-gtd-workflow-conventions",
+    );
+  });
+
+  it("strips aliases and heading refs from wikilinks", async () => {
+    await writeNote("target-note", "Target.");
+    await writeNote("a", "See [[Target Note|the target]].");
+    await writeNote("b", "See [[Target Note#Some Heading]].");
+    const graph = await buildGraph(notesDir);
+    expect(graph.incoming.get("target-note")!.has("a")).toBe(true);
+    expect(graph.incoming.get("target-note")!.has("b")).toBe(true);
   });
 
   it("deduplicates links within the same note", async () => {

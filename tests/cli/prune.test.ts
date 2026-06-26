@@ -291,31 +291,32 @@ describe("ori prune", () => {
   });
 
   it("notes with inDegree >= 2 are never candidates", async () => {
-    // Create a note that has 2+ incoming links
-    await writeNote("popular note", {
+    // Notes are stored under slug filenames; links are authored against the
+    // display title. Both must resolve to the same node.
+    await writeNote("popular-note", {
       description: "A note many link to",
       type: "idea",
       status: "active",
       created: "2024-01-01",
     });
 
-    await writeNote("linker one", {
+    await writeNote("linker-one", {
       description: "Links to popular",
       type: "idea",
       status: "active",
       created: "2026-03-01",
-    }, "See [[popular note]]");
+    }, "See [[Popular Note]]");
 
-    await writeNote("linker two", {
+    await writeNote("linker-two", {
       description: "Also links to popular",
       type: "idea",
       status: "active",
       created: "2026-03-01",
-    }, "Check [[popular note]]");
+    }, "Check [[Popular Note]]");
 
     const result = await runPrune({ startDir: tmpDir });
 
     const candidateTitles = result.data.candidates.map(c => c.title);
-    expect(candidateTitles).not.toContain("popular note");
+    expect(candidateTitles).not.toContain("popular-note");
   });
 });

@@ -1,6 +1,7 @@
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { parseFrontmatter } from "./frontmatter.js";
+import { normalizeLinkTarget } from "./slug.js";
 
 export type LinkGraph = {
   outgoing: Map<string, Set<string>>;
@@ -49,8 +50,10 @@ export async function buildGraph(notesDir: string): Promise<LinkGraph> {
     const links = new Set<string>();
 
     for (const match of content.matchAll(/\[\[([^\]]+)\]\]/g)) {
-      const target = match[1]?.trim();
-      if (target && target.length > 0) {
+      // Wikilinks are authored against display titles / aliases / heading refs;
+      // normalize to the note slug so they match node identities (filenames).
+      const target = normalizeLinkTarget(match[1] ?? "");
+      if (target.length > 0) {
         links.add(target);
       }
     }
