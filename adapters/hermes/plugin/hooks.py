@@ -147,6 +147,17 @@ def on_pre_llm_call(**kwargs):
             [_resolve_ori_bin(), "orient", "--vault", vault],
             capture_output=True,
             text=True,
+            # Never inherit fd 0. Under the TUI, the gateway's stdin is an
+            # AF_UNIX socketpair to the TUI parent, and `ori` sets O_NONBLOCK
+            # on whichever stdio fd is a socket (~0.14s after spawn, restored
+            # ~0.4s later on exit). O_NONBLOCK lives on the shared open file
+            # description, so that flag lands on the gateway's own stdin: any
+            # read entering that window gets EAGAIN, which CPython's buffered
+            # layer launders into a clean '' — the read loop falls through and
+            # the gateway exits 0 with a bogus "stdin EOF (TUI closed the
+            # command pipe)". capture_output already gives fresh pipes for
+            # stdout/stderr; stdin was the hole.
+            stdin=subprocess.DEVNULL,
             timeout=8,
         )
         if result.returncode != 0:
@@ -192,6 +203,7 @@ def on_session_start(**kwargs):
             ["ori", "health"],
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,  # see _orient(): inherited fd 0 kills the TUI gateway
             timeout=8,
         )
         if result.returncode != 0:
@@ -256,6 +268,16 @@ def on_session_end(**kwargs):
     try:
         subprocess.run(
             ["ori", "add", title, "--type", "insight"],
+            # This call inherited ALL THREE stdio fds. Under the TUI that means
+            # fd 0 AND fd 1 are the gateway's socketpairs to its parent: fd 0
+            # gets O_NONBLOCK'd into a spurious "stdin EOF" (see _orient()),
+            # and fd 1 is the JSON-RPC channel — ori's own stdout lands in the
+            # protocol stream, and gateway writes during the window raise
+            # BlockingIOError, which transport.py re-raises (EAGAIN is not a
+            # peer-gone errno). Redirect all three.
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             timeout=10,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError):
