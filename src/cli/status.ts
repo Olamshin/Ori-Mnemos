@@ -29,7 +29,12 @@ export async function runStatus(
       throw err;
     }
   }
-  const inboxCount = inboxEntries.filter((e) => e.isFile()).length;
+  // Notes only. Counting every file makes the scaffold's own `.gitkeep` read as
+  // a note pending promotion, so a freshly-initialised vault always claims
+  // "1 in inbox" (wake's countMd already had this right).
+  const inboxCount = inboxEntries.filter(
+    (e) => e.isFile() && e.name.endsWith(".md"),
+  ).length;
 
   return {
     success: true,
