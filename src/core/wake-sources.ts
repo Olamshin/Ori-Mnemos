@@ -3,6 +3,7 @@
  */
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { parseFrontmatter } from './frontmatter.js';
 
 export type WakeSource = {
   path: string;
@@ -56,22 +57,25 @@ export async function assembleWakeInputs(
       content = '';
     }
 
+    // Vault files carry YAML frontmatter. Strip it here, once, for every role:
+    // otherwise the delimiters become the briefing (`---` is the first
+    // non-heading line of identity.md, and it also passes the "starts with -"
+    // bullet test), and frontmatter list items (`project:\n  - cli`) read as
+    // reminders. Uses the shared parser so CRLF files and body lines starting
+    // `----` behave the same here as everywhere else in the codebase.
+    const body = parseFrontmatter(content).body;
+
     switch (src.role) {
       case 'identity':
-        result.identity = content;
+        result.identity = body;
         break;
       case 'goals':
-        result.goals = content;
+        result.goals = body;
         break;
       case 'due':
-        result.reminders = content;
+        result.reminders = body;
         break;
       case 'activity': {
-        // Strip frontmatter first — otherwise `---` and `date: …` eat slots in
-        // the cap and surface verbatim in the briefing.
-        const body = content.startsWith('---\n')
-          ? content.slice(content.indexOf('\n---', 4) + 4).replace(/^\r?\n/, '')
-          : content;
         const lines = body.split(/\r?\n/).filter(l => l.trim() !== '');
         // `tail` suits an append-only log; `head` suits a single-day state file
         // whose TOP section carries the substance (e.g. "## Completed Today").

@@ -45,6 +45,19 @@ def _resolve_vault():
     return _find_vault()
 
 
+def _ori_env(vault):
+    """Env for an `ori` subprocess, pinning the vault.
+
+    `ORI_VAULT` is ori's own authoritative override (validated, and it throws
+    rather than silently walking up to some parent vault). The gateway does not
+    export it — only the MCP subprocess gets it — so every spawn has to set it,
+    otherwise `ori` resolves against the gateway's cwd instead of the profile.
+    """
+    env = dict(os.environ)
+    env["ORI_VAULT"] = vault
+    return env
+
+
 def _resolve_ori_bin():
     """Find the `ori` binary. The gateway PATH does not include the overlay
     install, so prefer the absolute path derived from HERMES_HOME, then PATH."""
@@ -58,19 +71,24 @@ def _resolve_ori_bin():
     return shutil.which("ori") or "ori"
 
 
-# `ori wake` returns a FLAT line list plus per-section counts. The sections are
-# emitted in a fixed order, so the counts are what turn the flat list back into
-# labelled prose. Order must match buildWakePayload in src/core/wake.ts.
-_WAKE_SECTIONS = (
-    ("identity_line", None),            # folded into the preamble, not a heading
-    ("active_goals", "Active goals"),
-    ("reminders_due", "Reminders due"),
-    ("daily_recent", "Recent activity"),
-    ("warm_notes", "Active in memory"),
-    ("resurfaced", "Resurfaced"),
-    ("vault_vitals", "Vault"),
-    ("notices", "Notices"),
-)
+# `ori wake` returns a FLAT line list plus per-section counts. The counts are
+# what turn the flat list back into labelled prose.
+#
+# We iterate the counts mapping in ITS OWN order rather than a fixed list here:
+# buildWakePayload emits sectionMap in emission order and JSON preserves it, so
+# following it means an upstream insertion or rename shifts nothing. A hardcoded
+# order would slip the cursor and mislabel every later section — silently, with
+# no conflict and no error. Unknown names get a derived heading.
+_WAKE_HEADINGS = {
+    "identity_line": None,              # folded into the preamble, not a heading
+    "active_goals": "Active goals",
+    "reminders_due": "Reminders due",
+    "daily_recent": "Recent activity",
+    "warm_notes": "Active in memory",
+    "resurfaced": "Resurfaced",
+    "vault_vitals": "Vault",
+    "notices": "Notices",
+}
 
 _PREAMBLE = (
     "[Ori session briefing — auto-loaded at session start. You have persistent "
@@ -126,10 +144,10 @@ def _format_briefing(data):
 
     parts = [_PREAMBLE]
     cursor = 0
-    for name, heading in _WAKE_SECTIONS:
-        count = counts.get(name) or 0
-        if count <= 0:
+    for name, count in counts.items():
+        if not isinstance(count, int) or count <= 0:
             continue
+        heading = _WAKE_HEADINGS.get(name, name.replace("_", " ").capitalize())
         chunk = [l for l in lines[cursor:cursor + count] if l and l.strip()]
         cursor += count
         if heading is None:
@@ -167,9 +185,10 @@ def on_pre_llm_call(**kwargs):
 
     try:
         result = subprocess.run(
-            [_resolve_ori_bin(), "wake", "--vault", vault, "--json", "--budget", "96"],
+            [_resolve_ori_bin(), "wake", "--json", "--budget", "96"],
             capture_output=True,
             text=True,
+            env=_ori_env(vault),
             # Never inherit fd 0. Under the TUI, the gateway's stdin is an
             # AF_UNIX socketpair to the TUI parent, and `ori` sets O_NONBLOCK
             # on whichever stdio fd is a socket (~0.14s after spawn, restored
@@ -217,16 +236,18 @@ def _find_vault():
 
 def on_session_start(**kwargs):
     """Print vault health summary at session start."""
-    vault = _find_vault()
+    vault = _resolve_vault()
     if not vault:
         return
 
     try:
         result = subprocess.run(
-            ["ori", "health"],
+            [_resolve_ori_bin(), "health"],
             capture_output=True,
             text=True,
-            stdin=subprocess.DEVNULL,  # see _orient(): inherited fd 0 kills the TUI gateway
+            env=_ori_env(vault),
+            # see on_pre_llm_call(): inherited fd 0 kills the TUI gateway
+            stdin=subprocess.DEVNULL,
             timeout=8,
         )
         if result.returncode != 0:
@@ -272,7 +293,7 @@ def on_session_start(**kwargs):
 
 def on_session_end(**kwargs):
     """Capture session summary as an inbox note via `ori add`."""
-    vault = _find_vault()
+    vault = _resolve_vault()
     if not vault:
         return
 
@@ -290,14 +311,15 @@ def on_session_end(**kwargs):
 
     try:
         subprocess.run(
-            ["ori", "add", title, "--type", "insight"],
+            [_resolve_ori_bin(), "add", title, "--type", "insight"],
+            env=_ori_env(vault),
             # This call inherited ALL THREE stdio fds. Under the TUI that means
             # fd 0 AND fd 1 are the gateway's socketpairs to its parent: fd 0
-            # gets O_NONBLOCK'd into a spurious "stdin EOF" (see _orient()),
-            # and fd 1 is the JSON-RPC channel — ori's own stdout lands in the
-            # protocol stream, and gateway writes during the window raise
-            # BlockingIOError, which transport.py re-raises (EAGAIN is not a
-            # peer-gone errno). Redirect all three.
+            # gets O_NONBLOCK'd into a spurious "stdin EOF" (see
+            # on_pre_llm_call()), and fd 1 is the JSON-RPC channel — ori's own
+            # stdout lands in the protocol stream, and gateway writes during the
+            # window raise BlockingIOError, which transport.py re-raises (EAGAIN
+            # is not a peer-gone errno). Redirect all three.
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

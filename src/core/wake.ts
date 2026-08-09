@@ -26,20 +26,10 @@ export type WakeInputs = {
 export type DailyEntry = { date: string; lines: string[] };
 
 /**
- * Drop a leading YAML frontmatter block. Vault files are written with
- * frontmatter (`description:`/`type:`), and without this the delimiters
- * themselves become the briefing: `---` is the first non-heading line of
- * identity.md (so it becomes the identity line) and it also passes the
- * "starts with -" goal-bullet test twice.
+ * `---`, `***`, `___` — a horizontal rule, never content. Frontmatter is
+ * already stripped upstream of here (assembleWakeInputs), so this only guards
+ * against a rule written in the body of a file.
  */
-function stripFrontmatter(text: string): string {
-  if (!text.startsWith("---\n")) return text;
-  const end = text.indexOf("\n---", 4);
-  if (end === -1) return text;
-  return text.slice(end + 4).replace(/^\r?\n/, "");
-}
-
-/** `---`, `***`, `___` — a horizontal rule, never content. */
 function isThematicBreak(line: string): boolean {
   const t = line.trim();
   return /^(-{3,}|\*{3,}|_{3,})$/.test(t);
@@ -142,7 +132,7 @@ export function buildWakePayload(
 
   // Identity line
   let identityLine = "";
-  const identityLines = stripFrontmatter(inputs.identity).split("\n");
+  const identityLines = inputs.identity.split("\n");
   const isIdentityContent = (l: string) => {
     const t = l.trim();
     return Boolean(t) && !t.startsWith("#") && !isThematicBreak(t);
@@ -166,7 +156,7 @@ export function buildWakePayload(
   });
 
   // Active goals
-  const activeGoals = stripFrontmatter(inputs.goals)
+  const activeGoals = inputs.goals
     .split("\n")
     .filter((g) => !isThematicBreak(g))
     .filter((g) => g.trim().startsWith("-") || g.trim().startsWith("*"))
@@ -180,7 +170,7 @@ export function buildWakePayload(
   // Reminders due
   const today = new Date().toISOString().slice(0, 10);
   const dueKeywords = ["today", "overdue", "due", today];
-  const remindersDue = stripFrontmatter(inputs.reminders)
+  const remindersDue = inputs.reminders
     .split("\n")
     .filter((r) => r.trim().startsWith("-"))
     .filter((r) => {

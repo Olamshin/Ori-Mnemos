@@ -67,12 +67,11 @@ program
 program
   .command("wake")
   .option("--budget <n>", "max lines", "96")
-  .option("--vault <path>", "vault root (overrides discovery from cwd)")
   .option("--json", "emit {lines, sections}; the section counts let a caller label the flat line list")
   .action(async (options) => {
-    const result = await runWake(options.vault ?? process.cwd(), parseInt(options.budget, 10));
+    const result = await runWake(process.cwd(), parseInt(options.budget, 10));
     if (options.json) {
-      console.log(JSON.stringify({ success: true, data: result, warnings: [] }));
+      console.log(JSON.stringify(result));
     } else {
       console.log(result.lines.join("\n"));
     }
