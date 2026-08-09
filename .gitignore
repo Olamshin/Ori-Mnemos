@@ -36,6 +36,7 @@ tests/cli/*
 !tests/cli/archive.test.ts
 !tests/cli/prune.test.ts
 !tests/cli/explore-steering.test.ts
+!tests/cli/promote-target.test.ts
 !tests/core/
 tests/core/*
 !tests/core/config.test.ts

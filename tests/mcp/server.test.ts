@@ -378,12 +378,11 @@ describe("ori_promote", () => {
     };
     expect(addData.success).toBe(true);
 
-    // Extract filename from path
-    const filename = path.basename(addData.data.path);
-
-    // Promote it
+    // Promote it by feeding back exactly what ori_add returned. This is the
+    // round-trip an agent actually performs; the test used to basename() the
+    // path by hand, which hid the fact that promote rejected it.
     const promoteResult = await callTool(ctx.client, "ori_promote", {
-      path: filename,
+      path: addData.data.path,
     });
     const promoteData = promoteResult.parsed as {
       success: boolean;

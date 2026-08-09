@@ -138,6 +138,29 @@ async function listInboxNotes(inboxDir: string): Promise<string[]> {
   }
 }
 
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reduce a caller-supplied note reference to the inbox filename that promotion
+ * keys off. Callers legitimately hold three forms of the same note: the absolute
+ * path `ori_add` returns, a vault-relative path, and the bare slug. Promotion
+ * only ever opens `inbox/<filename>` (see the loop below), so the directory
+ * component carries no information — dropping it is what makes all three work.
+ * Backslashes are folded too: `path.basename` is POSIX-only at runtime here, but
+ * a Windows-form path can still arrive over MCP from a remote caller.
+ */
+function toInboxFilename(noteName: string): string {
+  const base = noteName.split(/[\\/]/).pop() ?? noteName;
+  return base.endsWith(".md") ? base : `${base}.md`;
+}
+
 async function appendPromoteLog(
   opsDir: string,
   entry: { file: string; classification: string; confidence: string; changes: string[] }
@@ -162,20 +185,36 @@ export async function runPromote(
 
   // Resolve target inbox notes
   const allInbox = await listInboxNotes(paths.inbox);
+  const inputWarnings: string[] = [];
   let targets: string[];
 
   if (options.all) {
     targets = allInbox;
   } else if (options.noteName) {
-    // Accept with or without .md extension
-    const name = options.noteName.endsWith(".md")
-      ? options.noteName
-      : `${options.noteName}.md`;
+    // Accept a bare slug, a vault-relative path, or the absolute path ori_add
+    // returned — all address the same inbox note.
+    const name = toInboxFilename(options.noteName);
+    // Recorded before the membership check so a failing lookup also explains
+    // why it is reporting a filename the caller never typed.
+    if (name !== options.noteName && name !== `${options.noteName}.md`) {
+      inputWarnings.push(
+        `Interpreted "${options.noteName}" as inbox note ${name}; directory components are ignored`,
+      );
+    }
     if (!allInbox.includes(name)) {
+      // Distinguish "already promoted" from "no such note": both used to report
+      // "not found", which sent callers hunting for a file that was simply
+      // past the inbox stage.
+      const alreadyPromoted = await fileExists(path.join(paths.notes, name));
       return {
         success: false,
         data: { promoted: [], skipped: [] },
-        warnings: [`Inbox note not found: ${name}`],
+        warnings: [
+          ...inputWarnings,
+          alreadyPromoted
+            ? `Already promoted: ${name} is in notes/, not inbox/`
+            : `Inbox note not found: ${name}`,
+        ],
       };
     }
     targets = [name];
@@ -200,7 +239,10 @@ export async function runPromote(
           reason: "LLM enhancement required but no provider is configured",
         })),
       },
-      warnings: ["LLM enhancement required but no provider is configured"],
+      warnings: [
+        ...inputWarnings,
+        "LLM enhancement required but no provider is configured",
+      ],
     };
   }
 
@@ -332,6 +374,6 @@ export async function runPromote(
   return {
     success: true,
     data: { promoted, skipped },
-    warnings: [],
+    warnings: inputWarnings,
   };
 }
