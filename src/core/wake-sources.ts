@@ -66,14 +66,22 @@ export async function assembleWakeInputs(
       case 'due':
         result.reminders = content;
         break;
-      case 'activity':
+      case 'activity': {
+        // Strip frontmatter first — otherwise `---` and `date: …` eat slots in
+        // the cap and surface verbatim in the briefing.
+        const body = content.startsWith('---\n')
+          ? content.slice(content.indexOf('\n---', 4) + 4).replace(/^\r?\n/, '')
+          : content;
+        const lines = body.split(/\r?\n/).filter(l => l.trim() !== '');
+        // `tail` suits an append-only log; `head` suits a single-day state file
+        // whose TOP section carries the substance (e.g. "## Completed Today").
         if (src.mode === 'tail') {
-          const lines = content.split(/\r?\n/).filter(l => l.trim() !== '');
-          const cap = src.cap;
-          const last = lines.slice(-cap);
-          result.activity = last;
+          result.activity = lines.slice(-src.cap);
+        } else if (src.mode === 'head') {
+          result.activity = lines.slice(0, src.cap);
         }
         break;
+      }
     }
   }
 

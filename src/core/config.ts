@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import yaml from "yaml";
 import { DEFAULT_LLM_CONFIG, type LlmConfig } from "./llm.js";
+import type { WakeSource } from "./wake-sources.js";
 
 export type TemplateMapping = {
   default: string;
@@ -153,7 +154,22 @@ export type OriConfig = {
   activation: ActivationConfig;
   warmth: WarmthConfig;
   explore: ExploreConfig;
+  /**
+   * `ori wake` source manifest. Optional — absent or empty falls back to the
+   * scaffold defaults in `loadWakeSources`. It has to be threaded explicitly:
+   * `applyConfigDefaults` rebuilds a fresh object from known keys, so anything
+   * not named here is dropped before `loadWakeSources` ever sees it, which
+   * silently made the whole manifest unconfigurable.
+   */
+  wake?: WakeConfig;
 };
+
+export type WakeConfig = {
+  sources?: WakeSource[];
+};
+
+const WAKE_ROLES = new Set(["identity", "goals", "due", "activity", "custom"]);
+const WAKE_MODES = new Set(["head", "tail", "fovea", "due-scan"]);
 
 const DEFAULT_PROMOTE_CONFIG: PromoteConfig = {
   auto: true,
@@ -292,6 +308,7 @@ export function applyConfigDefaults(raw: Partial<OriConfig>): OriConfig {
   const rawActivation = (raw as Record<string, unknown>).activation as Partial<ActivationConfig> | undefined;
   const rawWarmth = (raw as Record<string, unknown>).warmth as Partial<WarmthConfig> | undefined;
   const rawExplore = (raw as Record<string, unknown>).explore as Partial<ExploreConfig> | undefined;
+  const rawWake = (raw as Record<string, unknown>).wake as WakeConfig | undefined;
 
   return {
     vault: {
@@ -427,6 +444,9 @@ export function applyConfigDefaults(raw: Partial<OriConfig>): OriConfig {
       sub_question_max: rawExplore?.sub_question_max ?? DEFAULT_EXPLORE_CONFIG.sub_question_max,
       ppr_iteration_decay: rawExplore?.ppr_iteration_decay ?? DEFAULT_EXPLORE_CONFIG.ppr_iteration_decay,
     },
+    // Passed through untouched: `loadWakeSources` owns the fallback, and it
+    // distinguishes "absent" from "empty", so do not default to [] here.
+    ...(rawWake ? { wake: { sources: rawWake.sources } } : {}),
   };
 }
 
@@ -440,6 +460,30 @@ export function validateConfig(config: OriConfig): string[] {
   }
   if (typeof config.vitality.base !== "number") {
     errors.push("vitality.base must be a number");
+  }
+  // A typo'd role or mode is otherwise silent: the source is read, matches no
+  // case in assembleWakeInputs, and the briefing just comes back short.
+  const wakeSources = config.wake?.sources;
+  if (wakeSources !== undefined) {
+    if (!Array.isArray(wakeSources)) {
+      errors.push("wake.sources must be a list");
+    } else {
+      wakeSources.forEach((src, i) => {
+        const at = `wake.sources[${i}]`;
+        if (!src || typeof src.path !== "string" || !src.path) {
+          errors.push(`${at}.path is required`);
+        }
+        if (!src || !WAKE_ROLES.has(src.role)) {
+          errors.push(`${at}.role must be one of ${[...WAKE_ROLES].join(", ")}`);
+        }
+        if (!src || !WAKE_MODES.has(src.mode)) {
+          errors.push(`${at}.mode must be one of ${[...WAKE_MODES].join(", ")}`);
+        }
+        if (!src || typeof src.cap !== "number" || src.cap < 0) {
+          errors.push(`${at}.cap must be a non-negative number`);
+        }
+      });
+    }
   }
   return errors;
 }
