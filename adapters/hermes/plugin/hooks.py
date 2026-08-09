@@ -92,6 +92,27 @@ def _demote(line):
     return line
 
 
+def _is_heading(line):
+    return line.lstrip().startswith("#")
+
+
+def _prune_empty_headings(chunk):
+    """Drop headings that have nothing under them.
+
+    A skeleton day file (`## Completed Today` / `## Pending Today` with no
+    entries yet) otherwise contributes only headings — pure noise that still
+    spends lines of a hard budget.
+    """
+    kept = []
+    for i, line in enumerate(chunk):
+        if not _is_heading(line):
+            kept.append(line)
+            continue
+        if any(not _is_heading(nxt) for nxt in chunk[i + 1:i + 2]):
+            kept.append(line)
+    return kept
+
+
 def _format_briefing(data):
     """Render a `ori wake --json` payload as a compact markdown block.
 
@@ -111,12 +132,14 @@ def _format_briefing(data):
             continue
         chunk = [l for l in lines[cursor:cursor + count] if l and l.strip()]
         cursor += count
+        if heading is None:
+            if chunk:
+                parts.append(" ".join(chunk))
+            continue
+        chunk = _prune_empty_headings(chunk)
         if not chunk:
             continue
-        if heading is None:
-            parts.append(" ".join(chunk))
-        else:
-            parts.append(f"## {heading}\n" + "\n".join(_demote(l) for l in chunk))
+        parts.append(f"## {heading}\n" + "\n".join(_demote(l) for l in chunk))
 
     # Only the preamble means the vault produced nothing worth injecting.
     if len(parts) <= 1:
