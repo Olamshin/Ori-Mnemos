@@ -670,7 +670,9 @@ export async function runServeMcp(startDir: string, vaultOverride?: string) {
       "identify links to existing notes, and pass your decisions as overrides. " +
       "Heuristics run as fallback for anything you don't specify.",
     {
-      path: z.string().describe("Inbox note filename or path"),
+      path: z.string().describe(
+        "Inbox note: bare slug, vault-relative path, or the absolute path ori_add returned — all accepted; directory components are ignored",
+      ),
       type: z.string().optional().describe("Your classification: idea | decision | learning | insight | blocker | opportunity"),
       description: z.string().optional().describe("One sentence adding context beyond the title (max 200 chars)"),
       links: z.array(z.string()).optional().describe("Existing note titles this note should link to"),
