@@ -1,8 +1,10 @@
 """Ori Mnemos lifecycle hooks for Hermes Agent.
 
 on_pre_llm_call:  injects the Ori session briefing into the first turn of a
-                  session (deterministic orient — no reliance on the model
-                  choosing to call ori_orient).
+                  session (deterministic `ori wake` — no reliance on the model
+                  choosing to call ori_wake/ori_orient). wake is the bounded
+                  boot path: its budget is a hard line cap, so the briefing is
+                  constant-size no matter how large the vault grows.
 on_session_start: prints vault health summary (note count, inbox, fading, orphans).
 on_session_end:   captures a session insight via `ori add`.
 
@@ -56,71 +58,69 @@ def _resolve_ori_bin():
     return shutil.which("ori") or "ori"
 
 
-def _strip_frontmatter(text):
-    """Drop a leading YAML frontmatter block so the briefing reads cleanly."""
-    if text.startswith("---\n"):
-        end = text.find("\n---", 4)
-        if end != -1:
-            return text[end + 4:].lstrip("\n")
-    return text
+# `ori wake` returns a FLAT line list plus per-section counts. The sections are
+# emitted in a fixed order, so the counts are what turn the flat list back into
+# labelled prose. Order must match buildWakePayload in src/core/wake.ts.
+_WAKE_SECTIONS = (
+    ("identity_line", None),            # folded into the preamble, not a heading
+    ("active_goals", "Active goals"),
+    ("reminders_due", "Reminders due"),
+    ("daily_recent", "Recent activity"),
+    ("warm_notes", "Active in memory"),
+    ("resurfaced", "Resurfaced"),
+    ("vault_vitals", "Vault"),
+    ("notices", "Notices"),
+)
+
+_PREAMBLE = (
+    "[Ori session briefing — auto-loaded at session start. You have persistent "
+    "memory via the `ori` tools; do not start cold. Search with ori_query_ranked "
+    "before creating notes, and reuse the absolute path ori_add returns when you "
+    "call ori_validate/ori_promote.]"
+)
 
 
-def _section(title, body, limit=1800):
-    body = _strip_frontmatter(body or "").strip()
-    if not body:
-        return ""
-    if len(body) > limit:
-        body = body[:limit].rstrip() + "\n…(truncated)"
-    return f"## {title}\n{body}"
+def _demote(line):
+    """Re-level a heading lifted verbatim out of a vault file.
+
+    `head` mode on a day-state file pulls its own `# Daily State` along, and an
+    H1 nested under our `## Recent activity` inverts the outline it sits in.
+    """
+    stripped = line.lstrip()
+    if stripped.startswith("#"):
+        return "### " + stripped.lstrip("#").strip()
+    return line
 
 
 def _format_briefing(data):
-    """Render the orient payload as a compact markdown block for injection."""
-    parts = [
-        "[Ori session briefing — auto-loaded at session start. You have persistent "
-        "memory via the `ori` tools; do not start cold. Search with ori_query_ranked "
-        "before creating notes, and reuse the absolute path ori_add returns when you "
-        "call ori_validate/ori_promote.]"
-    ]
+    """Render a `ori wake --json` payload as a compact markdown block.
 
-    if data.get("firstRun"):
-        parts.append(
-            "## New vault\nThis vault has no identity yet — run onboarding (ask the user "
-            "to name the agent, its purpose, and do a brain dump), then save with ori_update."
-        )
+    `data` is ``{lines: [...], sections: {name: count}}``. Walking the sections
+    in their fixed emission order and slicing `lines` by the counts recovers the
+    structure the flat list threw away — without it the model gets an unlabelled
+    wall of text where a goal and a vault stat look identical.
+    """
+    lines = data.get("lines") or []
+    counts = data.get("sections") or {}
 
-    for title, key in (
-        ("Today (ops/daily.md)", "daily"),
-        ("Reminders (ops/reminders.md)", "reminders"),
-        ("Active goals (self/goals.md)", "goals"),
-    ):
-        section = _section(title, data.get(key))
-        if section:
-            parts.append(section)
+    parts = [_PREAMBLE]
+    cursor = 0
+    for name, heading in _WAKE_SECTIONS:
+        count = counts.get(name) or 0
+        if count <= 0:
+            continue
+        chunk = [l for l in lines[cursor:cursor + count] if l and l.strip()]
+        cursor += count
+        if not chunk:
+            continue
+        if heading is None:
+            parts.append(" ".join(chunk))
+        else:
+            parts.append(f"## {heading}\n" + "\n".join(_demote(l) for l in chunk))
 
-    vs = data.get("vaultStatus") or {}
-    ih = data.get("indexHealth") or {}
-    bits = []
-    if vs:
-        bits.append(f"{vs.get('noteCount', 0)} notes")
-        if vs.get("inboxCount"):
-            bits.append(f"{vs['inboxCount']} in inbox")
-        if vs.get("orphanCount"):
-            bits.append(f"{vs['orphanCount']} orphan(s)")
-    if ih:
-        bits.append(f"index {ih.get('coveragePercent', '?')}%")
-        if ih.get("stale"):
-            bits.append(f"{ih['stale']} stale")
-    if bits:
-        line = "## Vault\n" + " · ".join(bits)
-        if ih.get("warning"):
-            line += f"\n⚠ {ih['warning']}"
-        parts.append(line)
-
-    heating = (data.get("warmthLandscape") or {}).get("heating") or []
-    if heating:
-        parts.append("## Active in memory\n" + ", ".join(heating[:8]))
-
+    # Only the preamble means the vault produced nothing worth injecting.
+    if len(parts) <= 1:
+        return ""
     return "\n\n".join(p.strip() for p in parts if p and p.strip())
 
 
@@ -144,7 +144,7 @@ def on_pre_llm_call(**kwargs):
 
     try:
         result = subprocess.run(
-            [_resolve_ori_bin(), "orient", "--vault", vault],
+            [_resolve_ori_bin(), "wake", "--vault", vault, "--json", "--budget", "96"],
             capture_output=True,
             text=True,
             # Never inherit fd 0. Under the TUI, the gateway's stdin is an
